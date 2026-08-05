@@ -20,5 +20,8 @@ notify = "6.1"
 rand = "0.8"
 walkdir = "2.3"
 warp = "0.3"
+log = "0.4"
+env_logger = "0.10"
+tiff = "0.7"
 # optional libvips binding (feature gated)
 # libvips = { version = "0.7", optional = true }

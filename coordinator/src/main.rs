@@ -5,19 +5,22 @@
 
 use anyhow::Context;
 use clap::Parser;
-use notify::{RecommendedWatcher, RecursiveMode, Watcher, EventKind};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{BufReader, Read};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
+use tokio::io::AsyncReadExt;
 use walkdir::WalkDir;
 use warp::Filter;
+use log::{info, warn, error, debug};
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -83,6 +86,7 @@ struct ManifestEntry {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init();
     let cli = Cli::parse();
 
     if !cli.storage.starts_with("local://") {
@@ -102,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
     let admin_bind = cli.admin_bind.clone();
     tokio::spawn(async move {
         if let Err(e) = run_admin_server(manifests_dir, admin_bind).await {
-            eprintln!("Admin server error: {}", e);
+            error!("Admin server error: {}", e);
         }
     });
 
@@ -128,34 +132,43 @@ async fn run_admin_server(manifests_dir: String, bind: String) -> anyhow::Result
     // POST /admin/reprocess/{name} -> move failed/{name} -> queue/{name}
 
     let dir = manifests_dir.clone();
-    let status = warp::path!("admin" / "status");
-    let status = status.and_then(move || {
-        let d = dir.clone();
-        async move { Ok::<_, warp::Rejection>(warp::reply::json(&gather_status(&d))) }
+    let dir_jobs = manifests_dir.clone();
+    let dir_reproc = manifests_dir.clone();
+
+    // status route returns serialized JSON string to avoid borrow issues
+    let status_route = warp::path!("admin" / "status").map(move || {
+        let v = gather_status(&dir);
+        let s = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
+        warp::reply::with_header(s, "content-type", "application/json")
     });
 
-    let dir2 = manifests_dir.clone();
-    let jobs = warp::path!("admin" / "jobs");
-    let jobs = jobs.and_then(move || {
-        let d = dir2.clone();
-        async move { Ok::<_, warp::Rejection>(warp::reply::json(&list_jobs(&d))) }
+    // jobs route
+    let jobs_route = warp::path!("admin" / "jobs").map(move || {
+        let v = list_jobs(&dir_jobs);
+        let s = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
+        warp::reply::with_header(s, "content-type", "application/json")
     });
 
-    let dir3 = manifests_dir.clone();
-    let reproc = warp::path!("admin" / "reprocess" / String)
+    // reprocess route
+    let reproc_route = warp::path!("admin" / "reprocess" / String)
+        .and(warp::post())
         .and_then(move |name: String| {
-            let d = dir3.clone();
+            let d = dir_reproc.clone();
             async move {
                 match reprocess_manifest(&d, &name) {
                     Ok(_) => Ok::<_, warp::Rejection>(warp::reply::with_status("ok", warp::http::StatusCode::OK)),
-                    Err(_) => Ok(warp::reply::with_status("error", warp::http::StatusCode::INTERNAL_SERVER_ERROR)),
+                    Err(err) => {
+                        let msg = format!("error: {}", err);
+                        Ok(warp::reply::with_status(msg, warp::http::StatusCode::INTERNAL_SERVER_ERROR))
+                    }
                 }
             }
         });
 
-    let routes = status.or(jobs).or(reproc);
-    println!("Admin server listening on http://{}", bind);
-    warp::serve(routes).run(bind.parse()?).await;
+    let routes = status_route.or(jobs_route).or(reproc_route);
+    let addr: SocketAddr = bind.parse().context("Invalid admin bind address")?;
+    info!("Admin server listening on http://{}", addr);
+    warp::serve(routes).run(addr).await;
     Ok(())
 }
 
@@ -185,10 +198,11 @@ fn list_jobs(manifests_dir: &str) -> serde_json::Value {
         let dir = Path::new(manifests_dir).join(state);
         let mut arr = Vec::new();
         if dir.exists() {
-            for entry in fs::read_dir(dir).unwrap_or_else(|_| fs::read_dir("./").unwrap()) {
-                if let Ok(e) = entry {
-                    if e.path().is_file() {
-                        arr.push(e.file_name().to_string_lossy().to_string());
+            if let Ok(rd) = fs::read_dir(&dir) {
+                for entry in rd.filter_map(|e| e.ok()) {
+                    let p = entry.path();
+                    if p.is_file() {
+                        arr.push(entry.file_name().to_string_lossy().to_string());
                     }
                 }
             }
@@ -202,8 +216,8 @@ fn reprocess_manifest(manifests_dir: &str, name: &str) -> anyhow::Result<()> {
     let failed = Path::new(manifests_dir).join("failed").join(name);
     let queue = Path::new(manifests_dir).join("queue").join(name);
     if !failed.exists() { anyhow::bail!("Failed manifest not found: {}", failed.display()); }
-    fs::rename(&failed, &queue).context("Failed to move manifest back to queue")?;
-    println!("Requeued manifest {}", name);
+    atomic_move(&failed, &queue).context("Failed to move manifest back to queue")?;
+    info!("Requeued manifest {}", name);
     Ok(())
 }
 
@@ -227,8 +241,8 @@ async fn run_watch_loop(cli: &Cli) -> anyhow::Result<()> {
                     let fname = p.file_name().unwrap().to_string_lossy().to_string();
                     let queued = queue_dir.join(&fname);
                     if !queued.exists() {
-                        fs::rename(p, &queued).ok();
-                        println!("Enqueued existing manifest {}", fname);
+                        atomic_move(p, &queued).ok();
+                        info!("Enqueued existing manifest {}", fname);
                     }
                 }
             }
@@ -237,8 +251,8 @@ async fn run_watch_loop(cli: &Cli) -> anyhow::Result<()> {
 
     // create notify watcher
     let (tx, rx) = channel();
-    let mut watcher: RecommendedWatcher = RecommendedWatcher::new(tx, notify::Config::default())?;
-    watcher.watch(manifests_dir, RecursiveMode::NonRecursive)?;
+    let mut watcher: notify::RecommendedWatcher = notify::RecommendedWatcher::new(tx, notify::Config::default())?;
+    watcher.watch(manifests_dir, notify::RecursiveMode::NonRecursive)?;
 
     loop {
         // process any queued manifests
@@ -247,19 +261,19 @@ async fn run_watch_loop(cli: &Cli) -> anyhow::Result<()> {
             if path.is_file() {
                 let fname = path.file_name().unwrap().to_string_lossy().to_string();
                 let processing_path = processing_dir.join(&fname);
-                if fs::rename(&path, &processing_path).is_ok() {
-                    println!("Picked job {}", fname);
+                if atomic_move(&path, &processing_path).is_ok() {
+                    info!("Picked job {}", fname);
                     match process_manifest(processing_path.clone(), cli).await {
                         Ok(_) => {
                             let processed_target = processed_dir.join(&fname);
-                            fs::rename(&processing_path, &processed_target).ok();
-                            println!("Job {} processed", fname);
+                            atomic_move(&processing_path, &processed_target).ok();
+                            info!("Job {} processed", fname);
                         }
                         Err(err) => {
-                            eprintln!("Job {} failed: {}", fname, err);
+                            error!("Job {} failed: {}", fname, err);
                             let failed_target = failed_dir.join(&fname);
-                            fs::rename(&processing_path, &failed_target).ok();
-                            println!("Moved failed manifest to {}", failed_target.display());
+                            atomic_move(&processing_path, &failed_target).ok();
+                            warn!("Moved failed manifest to {}", failed_target.display());
                         }
                     }
                 }
@@ -269,7 +283,7 @@ async fn run_watch_loop(cli: &Cli) -> anyhow::Result<()> {
         // wait for notify events or sleep
         match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(ev) => {
-                println!("FS event: {:?}", ev);
+                debug!("FS event: {:?}", ev);
             }
             Err(_) => {
                 // timeout
@@ -279,10 +293,10 @@ async fn run_watch_loop(cli: &Cli) -> anyhow::Result<()> {
 }
 
 async fn process_manifest(manifest_path: PathBuf, cli: &Cli) -> anyhow::Result<()> {
-    println!("Processing manifest {}", manifest_path.display());
+    info!("Processing manifest {}", manifest_path.display());
     let data = fs::read_to_string(&manifest_path)?;
     let entries: Vec<ManifestEntry> = serde_json::from_str(&data)?;
-    println!("{} tiles", entries.len());
+    info!("{} tiles", entries.len());
     let job_name = manifest_path.file_stem().unwrap().to_string_lossy().to_string();
     let job_workdir = Path::new(&cli.workdir).join(&job_name);
     if job_workdir.exists() { fs::remove_dir_all(&job_workdir).ok(); }
@@ -303,13 +317,13 @@ async fn process_manifest(manifest_path: PathBuf, cli: &Cli) -> anyhow::Result<(
                 if let Some(ref expected) = e.sha256 {
                     match compute_sha256_hex_async(&dest).await {
                         Ok(found) if found.eq_ignore_ascii_case(expected) => {
-                            println!("Tile {} already verified", e.index);
+                            info!("Tile {} already verified", e.index);
                             drop(permit);
                             return Ok::<(), anyhow::Error>(());
                         }
                         _ => { fs::remove_file(&dest).ok(); }
                     }
-                } else { println!("Tile {} present no-checksum, skipping", e.index); drop(permit); return Ok(()); }
+                } else { info!("Tile {} present no-checksum, skipping", e.index); drop(permit); return Ok(()); }
             }
             let src = Path::new(&storage_base).join(&e.filename);
             if !src.exists() { anyhow::bail!("Source missing: {:?}", src); }
@@ -318,13 +332,13 @@ async fn process_manifest(manifest_path: PathBuf, cli: &Cli) -> anyhow::Result<(
                 attempt += 1;
                 let tmp = dest.with_extension("tmp");
                 let copy_res = tokio::fs::copy(&src, &tmp).await;
-                if let Err(err) = copy_res { eprintln!("copy failed {}", err); }
+                if let Err(err) = copy_res { warn!("copy failed {}", err); }
                 else {
                     if let Some(ref expected) = e.sha256 {
                         match compute_sha256_hex_async(&tmp).await {
                             Ok(found) if found.eq_ignore_ascii_case(expected) => { tokio::fs::rename(&tmp, &dest).await?; break; }
-                            Ok(found) => { eprintln!("checksum mismatch {} != {}", found, expected); tokio::fs::remove_file(&tmp).await.ok(); }
-                            Err(err) => { eprintln!("checksum compute failed {}", err); tokio::fs::remove_file(&tmp).await.ok(); }
+                            Ok(found) => { warn!("checksum mismatch {} != {}", found, expected); tokio::fs::remove_file(&tmp).await.ok(); }
+                            Err(err) => { warn!("checksum compute failed {}", err); tokio::fs::remove_file(&tmp).await.ok(); }
                         }
                     } else { tokio::fs::rename(&tmp, &dest).await?; break; }
                 }
@@ -332,7 +346,7 @@ async fn process_manifest(manifest_path: PathBuf, cli: &Cli) -> anyhow::Result<(
                 let backoff = backoff_base.saturating_pow(attempt.saturating_sub(1)) as u64;
                 let jitter = rand::thread_rng().gen_range(0..=backoff);
                 let s = Duration::from_secs(backoff + jitter);
-                println!("Retrying tile {} after {:?}", e.index, s);
+                info!("Retrying tile {} after {:?}", e.index, s);
                 sleep(s).await;
             }
             drop(permit);
@@ -345,12 +359,20 @@ async fn process_manifest(manifest_path: PathBuf, cli: &Cli) -> anyhow::Result<(
         match h.await { Ok(Ok(())) => {}, Ok(Err(e)) => return Err(e), Err(e) => return Err(anyhow::anyhow!("join error {:?}", e)), }
     }
 
-    println!("All tiles downloaded to {}", job_workdir.display());
-    let out_tiff = format!("{}.{job}.tiff", cli.out, job = job_name);
+    info!("All tiles downloaded to {}", job_workdir.display());
+    let out_tiff = format!("{}.{}.tiff", cli.out, job_name);
     // try rust vips
-    if try_rust_vips_stitch(&job_workdir, &entries, cli).is_ok() { println!("stitched via rust vips"); }
-    else if command_exists("vips") { vips_cli_arrayjoin(&job_workdir, &entries, cli.cols_from_entries(&entries), &out_tiff)?; }
-    else { anyhow::bail!("No vips available"); }
+    match try_rust_vips_stitch(&job_workdir, &entries, cli) {
+        Ok(()) => info!("stitched via rust vips"),
+        Err(_) => {
+            if command_exists("vips") {
+                vips_cli_arrayjoin(&job_workdir, &entries, compute_cols(&entries), &out_tiff)?;
+            } else {
+                anyhow::bail!("No vips available");
+            }
+        }
+    }
+
     let compressed = compress_tiff_with_xz(&out_tiff)?;
 
     let upload_dir = cli.upload.trim_start_matches("local://"); fs::create_dir_all(upload_dir)?;
@@ -361,14 +383,18 @@ async fn process_manifest(manifest_path: PathBuf, cli: &Cli) -> anyhow::Result<(
         fs::copy(&compressed, &dest)?;
         let ssrc = compute_sha256_hex_sync(Path::new(&compressed))?;
         let sdst = compute_sha256_hex_sync(&dest)?;
-        if ssrc.eq_ignore_ascii_case(&sdst) { println!("Upload verified {}", ssrc); break; }
-        eprintln!("Upload verify failed {} != {}", ssrc, sdst);
+        if ssrc.eq_ignore_ascii_case(&sdst) { info!("Upload verified {}", ssrc); break; }
+        warn!("Upload verify failed {} != {}", ssrc, sdst);
         if attempt >= cli.upload_max_attempts { anyhow::bail!("Upload verify failed after {} attempts", attempt); }
         fs::remove_file(&dest).ok(); std::thread::sleep(Duration::from_secs(2u64.pow(attempt.min(6))));
     }
 
-    println!("Job {} done", job_name);
+    info!("Job {} done", job_name);
     Ok(())
+}
+
+fn compute_cols(entries: &[ManifestEntry]) -> usize {
+    entries.iter().map(|e| e.col).max().map(|m| (m + 1) as usize).unwrap_or(0)
 }
 
 fn try_rust_vips_stitch(_workdir: &Path, _entries: &[ManifestEntry], _cli: &Cli) -> anyhow::Result<()> {
@@ -395,9 +421,42 @@ fn command_exists(n: &str) -> bool { which::which(n).is_ok() }
 
 fn extract_ext(fname: &str) -> String { Path::new(fname).extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_else(|| ".tiff".to_string()) }
 
-async fn compute_sha256_hex_async(p: &Path) -> anyhow::Result<String> { let d = tokio::fs::read(p).await?; let mut h = Sha256::new(); h.update(&d); Ok(hex::encode(h.finalize())) }
+async fn compute_sha256_hex_async(p: &Path) -> anyhow::Result<String> {
+    // streaming async read to avoid loading whole file into memory
+    let mut file = tokio::fs::File::open(p).await?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 8 * 1024];
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 { break; }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
 
-fn compute_sha256_hex_sync(p: &Path) -> anyhow::Result<String> { let d = fs::read(p)?; let mut h = Sha256::new(); h.update(&d); Ok(hex::encode(h.finalize())) }
+fn compute_sha256_hex_sync(p: &Path) -> anyhow::Result<String> {
+    let f = fs::File::open(p)?;
+    let mut reader = BufReader::new(f);
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 { break; }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
 
-trait ManifestCols { fn cols_from_entries(&self, entries: &[ManifestEntry]) -> usize; }
-impl ManifestCols for Cli { fn cols_from_entries(&self, entries: &[ManifestEntry]) -> usize { let mut max_col = 0u32; for e in entries { if e.col > max_col { max_col = e.col; } } (max_col + 1) as usize } }
+fn atomic_move(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    // try rename first
+    match fs::rename(src, dst) {
+        Ok(_) => return Ok(()),
+        Err(e) => {
+            warn!("Rename failed (attempting copy+remove): {}", e);
+            // fallback to copy + remove
+            fs::copy(src, dst)?;
+            fs::remove_file(src)?;
+            return Ok(());
+        }
+    }
+}
