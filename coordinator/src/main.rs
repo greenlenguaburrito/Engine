@@ -1,7 +1,7 @@
 // coordinator/src/main.rs
 // Watch-mode coordinator with HTTP admin endpoints and job queue.
 // Build: cd coordinator && cargo build --release
-// Run (watch mode): ./target/release/coordinator --watch --manifests-dir ./manifests --storage local:///shared/tiles --out /results/final --workdir /tmp/work --upload local:///uploads
+// Run (watch mode): ./target/release/coordinator --watch --manifests-dir ./manifests --storage local:///shared/tiles --out /results/final --workdir /tmp/work --upload local:///uploads --admin-token <token>
 
 use anyhow::Context;
 use clap::Parser;
@@ -71,6 +71,10 @@ struct Cli {
     /// admin http bind, e.g. 0.0.0.0:3030
     #[arg(long, default_value = "127.0.0.1:3030")]
     admin_bind: String,
+
+    /// Optional admin token; if set, admin endpoints require this token via Authorization: Bearer <token> or X-Admin-Token header
+    #[arg(long, default_value = "")]
+    admin_token: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -83,6 +87,10 @@ struct ManifestEntry {
     resolution: (u32, u32),
     sha256: Option<String>,
 }
+
+#[derive(Debug)]
+struct Unauthorized;
+impl warp::reject::Reject for Unauthorized {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -104,8 +112,9 @@ async fn main() -> anyhow::Result<()> {
     // spawn admin HTTP server
     let manifests_dir = cli.manifests_dir.clone();
     let admin_bind = cli.admin_bind.clone();
+    let admin_token = cli.admin_token.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_admin_server(manifests_dir, admin_bind).await {
+        if let Err(e) = run_admin_server(manifests_dir, admin_bind, admin_token).await {
             error!("Admin server error: {}", e);
         }
     });
@@ -125,34 +134,55 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_admin_server(manifests_dir: String, bind: String) -> anyhow::Result<()> {
-    // routes:
-    // GET /admin/status -> json counts
-    // GET /admin/jobs -> list jobs and states
-    // POST /admin/reprocess/{name} -> move failed/{name} -> queue/{name}
+async fn run_admin_server(manifests_dir: String, bind: String, admin_token: String) -> anyhow::Result<()> {
+    // Create an auth filter: if admin_token is empty, allow all; otherwise require header
+    let token = admin_token.clone();
+    let auth_filter = if token.is_empty() {
+        warp::any().map(|| ()).boxed()
+    } else {
+        let t = token.clone();
+        warp::header::optional::<String>("authorization")
+            .and(warp::header::optional::<String>("x-admin-token"))
+            .and_then(move |auth: Option<String>, x: Option<String>| {
+                let t = t.clone();
+                async move {
+                    let ok = if let Some(a) = auth {
+                        let low = a.to_lowercase();
+                        if low.starts_with("bearer ") { a[7..].trim() == t } else { a.trim() == t }
+                    } else if let Some(xv) = x { xv == t } else { false };
+                    if ok { Ok::<(), warp::Rejection>(()) } else { Err(warp::reject::custom(Unauthorized)) }
+                }
+            })
+            .boxed()
+    };
 
     let dir = manifests_dir.clone();
     let dir_jobs = manifests_dir.clone();
     let dir_reproc = manifests_dir.clone();
 
     // status route returns serialized JSON string to avoid borrow issues
-    let status_route = warp::path!("admin" / "status").map(move || {
-        let v = gather_status(&dir);
-        let s = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
-        warp::reply::with_header(s, "content-type", "application/json")
-    });
+    let status_route = warp::path!("admin" / "status")
+        .and(auth_filter.clone())
+        .map(move |_u: ()| {
+            let v = gather_status(&dir);
+            let s = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
+            warp::reply::with_header(s, "content-type", "application/json")
+        });
 
     // jobs route
-    let jobs_route = warp::path!("admin" / "jobs").map(move || {
-        let v = list_jobs(&dir_jobs);
-        let s = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
-        warp::reply::with_header(s, "content-type", "application/json")
-    });
+    let jobs_route = warp::path!("admin" / "jobs")
+        .and(auth_filter.clone())
+        .map(move |_u: ()| {
+            let v = list_jobs(&dir_jobs);
+            let s = serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string());
+            warp::reply::with_header(s, "content-type", "application/json")
+        });
 
     // reprocess route
     let reproc_route = warp::path!("admin" / "reprocess" / String)
         .and(warp::post())
-        .and_then(move |name: String| {
+        .and(auth_filter.clone())
+        .and_then(move |name: String, _u: ()| {
             let d = dir_reproc.clone();
             async move {
                 match reprocess_manifest(&d, &name) {
@@ -165,7 +195,15 @@ async fn run_admin_server(manifests_dir: String, bind: String) -> anyhow::Result
             }
         });
 
-    let routes = status_route.or(jobs_route).or(reproc_route);
+    let routes = status_route.or(jobs_route).or(reproc_route)
+        .recover(|err: warp::Rejection| async move {
+            if err.find::<Unauthorized>().is_some() {
+                Ok::<_, warp::Rejection>(warp::reply::with_status("unauthorized", warp::http::StatusCode::UNAUTHORIZED))
+            } else {
+                Err(err)
+            }
+        });
+
     let addr: SocketAddr = bind.parse().context("Invalid admin bind address")?;
     info!("Admin server listening on http://{}", addr);
     warp::serve(routes).run(addr).await;
