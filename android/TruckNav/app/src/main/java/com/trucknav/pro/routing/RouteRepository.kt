@@ -39,13 +39,18 @@ class RouteRepository {
         origin: LatLng,
         destination: LatLng,
         profile: TruckProfile,
+        waypoints: List<LatLng> = emptyList(),
         onResult: (RouteResult) -> Unit
     ) {
         // OkHttp callbacks fire on a background thread, but callers (drawing the
         // route on TomTomMap, updating views) need the main thread -- hop back to it.
         val deliver: (RouteResult) -> Unit = { result -> mainHandler.post { onResult(result) } }
-        val path = "https://api.tomtom.com/routing/1/calculateRoute/" +
-            "${origin.latitude},${origin.longitude}:${destination.latitude},${destination.longitude}/json"
+
+        // TomTom's calculateRoute endpoint takes any number of colon-separated
+        // "lat,lon" stops in order: origin:stop1:stop2:...:destination.
+        val stops = (listOf(origin) + waypoints + destination)
+            .joinToString(":") { "${it.latitude},${it.longitude}" }
+        val path = "https://api.tomtom.com/routing/1/calculateRoute/$stops/json"
 
         val urlBuilder = path.toHttpUrl().newBuilder()
             .addQueryParameter("key", BuildConfig.TOMTOM_API_KEY)

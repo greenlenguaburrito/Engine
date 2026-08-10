@@ -22,12 +22,14 @@ class RouteProgressTracker(
         fun onAnnounce(text: String)
         fun onProgress(distanceRemainingMeters: Double, etaMillis: Long)
         fun onArrived()
+        fun onRouteDeviated()
     }
 
     private val cumulative = RouteGeometry.cumulativeDistances(route.path)
     private var currentInstructionIndex = 0
     private val announced = mutableSetOf<Pair<Int, Double>>()
     private var arrived = false
+    private var deviated = false
 
     init {
         route.instructions.firstOrNull()?.let { listener.onInstructionChanged(it) }
@@ -35,7 +37,13 @@ class RouteProgressTracker(
 
     /** Feed each new GPS fix in here while navigation is active. */
     fun onLocationUpdate(current: LatLng) {
-        if (route.instructions.isEmpty() || arrived) return
+        if (route.instructions.isEmpty() || arrived || deviated) return
+
+        if (RouteGeometry.distanceOffRoute(route.path, current) > OFF_ROUTE_THRESHOLD_METERS) {
+            deviated = true
+            listener.onRouteDeviated()
+            return
+        }
 
         val progressMeters = RouteGeometry.progressAlongRoute(route.path, cumulative, current)
 
@@ -70,6 +78,7 @@ class RouteProgressTracker(
 
     private companion object {
         const val ARRIVAL_RADIUS_METERS = 40.0
+        const val OFF_ROUTE_THRESHOLD_METERS = 80.0
 
         // (trigger distance in meters, spoken prefix). Checked from largest to smallest.
         val ANNOUNCEMENT_POINTS = listOf(

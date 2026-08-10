@@ -106,6 +106,52 @@
                     android:src="@drawable/ic_search"
                     app:tint="@android:color/white" />
             </LinearLayout>
+
+            <!-- Dynamically filled with one removable chip per stop; hidden when empty. -->
+            <LinearLayout
+                android:id="@+id/waypointsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/recentButton"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Recent"
+                    android:textAllCaps="false"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp"
+                    app:icon="@drawable/ic_history"
+                    app:iconTint="@color/text_secondary"
+                    app:iconSize="16dp" />
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/addStopButton"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Add Stop"
+                    android:textAllCaps="false"
+                    android:textColor="@color/truck_blue"
+                    android:textSize="13sp"
+                    app:icon="@drawable/ic_plus"
+                    app:iconTint="@color/truck_blue"
+                    app:iconSize="16dp" />
+            </LinearLayout>
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 

@@ -3,10 +3,12 @@ package com.trucknav.pro
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.ArrayAdapter
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -15,6 +17,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.material.snackbar.Snackbar
+import com.trucknav.pro.data.RecentDestinationsStore
 import com.trucknav.pro.data.TruckProfileStore
 import com.trucknav.pro.databinding.ActivityMainBinding
 import com.trucknav.pro.location.LocationTracker
@@ -56,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var routeRepository: RouteRepository
     private lateinit var searchRepository: SearchRepository
     private lateinit var truckProfileStore: TruckProfileStore
+    private lateinit var recentDestinationsStore: RecentDestinationsStore
     private lateinit var locationTracker: LocationTracker
     private lateinit var voiceGuidanceEngine: VoiceGuidanceEngine
 
@@ -65,6 +69,14 @@ class MainActivity : AppCompatActivity() {
 
     private var currentPosition = LatLng(34.5828, -117.4093) // fallback: Adelanto, CA
     private var destinationPosition: LatLng? = null
+    private var destinationLabel: String? = null
+
+    // Stops visited before the final destination, in order. Position + display label.
+    // NOTE: a mid-route reroute (see onRouteDeviated below) currently replans through
+    // all of these regardless of which the driver has already passed -- fine for the
+    // common case of 1-2 stops on a personal route, but not stop-aware.
+    private val waypoints = mutableListOf<Pair<LatLng, String>>()
+
     private var drawnRoute: MapRoute? = null
     private var plannedRoute: TruckRoute? = null
 
@@ -96,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         routeRepository = RouteRepository()
         searchRepository = SearchRepository()
         truckProfileStore = TruckProfileStore(this)
+        recentDestinationsStore = RecentDestinationsStore(this)
         locationTracker = LocationTracker(this)
         voiceGuidanceEngine = VoiceGuidanceEngine(this)
 
@@ -181,6 +194,9 @@ class MainActivity : AppCompatActivity() {
         binding.searchButton.setOnClickListener { searchDestination() }
         binding.destInput.setOnEditorActionListener { _, _, _ -> searchDestination(); true }
 
+        binding.recentButton.setOnClickListener { showRecentDestinations() }
+        binding.addStopButton.setOnClickListener { promptAddStop() }
+
         binding.dimensionsButton.setOnClickListener { showTruckProfileDialog() }
         binding.trafficButton.setOnClickListener { toggleTraffic() }
         binding.recenterButton.setOnClickListener { recenterCamera() }
@@ -221,7 +237,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // Search + truck-legal routing
+    // Search + destination picking + stops + recents
     // ------------------------------------------------------------------
 
     private fun searchDestination() {
@@ -237,10 +253,9 @@ class MainActivity : AppCompatActivity() {
             when (result) {
                 is DestinationResult.Success -> {
                     if (result.candidates.size == 1) {
-                        destinationPosition = result.candidates[0].position
-                        calculateRoute(truckProfileStore.load())
+                        setFinalDestination(result.candidates[0])
                     } else {
-                        showDestinationPicker(result.candidates)
+                        showDestinationPicker(result.candidates) { candidate -> setFinalDestination(candidate) }
                     }
                 }
                 DestinationResult.NoResults ->
@@ -251,8 +266,114 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Lets the driver pick which match they meant (e.g. which "Amazon" of several nearby). */
-    private fun showDestinationPicker(candidates: List<DestinationCandidate>) {
+    private fun setFinalDestination(candidate: DestinationCandidate) {
+        destinationPosition = candidate.position
+        destinationLabel = candidate.primaryLabel
+        binding.destInput.setText(candidate.primaryLabel)
+        calculateRoute(truckProfileStore.load())
+    }
+
+    private fun promptAddStop() {
+        val input = EditText(this).apply {
+            hint = "Search for a stop…"
+            setPadding(48, 32, 48, 32)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Add a stop")
+            .setView(input)
+            .setPositiveButton("Search") { _, _ ->
+                val query = input.text?.toString()?.trim().orEmpty()
+                if (query.isEmpty()) return@setPositiveButton
+                searchRepository.searchDestination(query, currentPosition) { result ->
+                    when (result) {
+                        is DestinationResult.Success -> {
+                            if (result.candidates.size == 1) {
+                                addWaypoint(result.candidates[0])
+                            } else {
+                                showDestinationPicker(result.candidates) { candidate -> addWaypoint(candidate) }
+                            }
+                        }
+                        DestinationResult.NoResults ->
+                            Snackbar.make(binding.root, R.string.error_address_not_found, Snackbar.LENGTH_SHORT).show()
+                        is DestinationResult.Error ->
+                            Snackbar.make(binding.root, result.message, Snackbar.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun addWaypoint(candidate: DestinationCandidate) {
+        waypoints.add(candidate.position to candidate.primaryLabel)
+        updateWaypointsUi()
+        if (destinationPosition != null) {
+            calculateRoute(truckProfileStore.load())
+        } else {
+            Snackbar.make(binding.root, "Stop added. Now enter your final destination.", Snackbar.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun updateWaypointsUi() {
+        binding.waypointsContainer.removeAllViews()
+        if (waypoints.isEmpty()) {
+            binding.waypointsContainer.visibility = View.GONE
+            return
+        }
+        binding.waypointsContainer.visibility = View.VISIBLE
+
+        waypoints.forEachIndexed { index, (_, label) ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 8, 0, 8)
+            }
+            row.addView(
+                TextView(this).apply {
+                    text = "Via: $label"
+                    textSize = 13f
+                    setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                }
+            )
+            row.addView(
+                TextView(this).apply {
+                    text = "Remove"
+                    textSize = 12f
+                    setTextColor(ContextCompat.getColor(context, R.color.truck_red))
+                    setPadding(24, 0, 0, 0)
+                    setOnClickListener {
+                        waypoints.removeAt(index)
+                        updateWaypointsUi()
+                        if (destinationPosition != null) calculateRoute(truckProfileStore.load())
+                    }
+                }
+            )
+            binding.waypointsContainer.addView(row)
+        }
+    }
+
+    private fun showRecentDestinations() {
+        val recents = recentDestinationsStore.load()
+        if (recents.isEmpty()) {
+            Snackbar.make(binding.root, "No recent destinations yet.", Snackbar.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Recent destinations")
+            .setItems(recents.map { it.label }.toTypedArray()) { _, which ->
+                val chosen = recents[which]
+                destinationPosition = chosen.position
+                destinationLabel = chosen.label
+                binding.destInput.setText(chosen.label)
+                calculateRoute(truckProfileStore.load())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Two-line picker (name + address) shared by destination search and add-stop search. */
+    private fun showDestinationPicker(candidates: List<DestinationCandidate>, onChosen: (DestinationCandidate) -> Unit) {
         val adapter = object : ArrayAdapter<DestinationCandidate>(
             this, android.R.layout.simple_list_item_2, android.R.id.text1, candidates
         ) {
@@ -267,23 +388,25 @@ class MainActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle("Choose a destination")
-            .setAdapter(adapter) { _, which ->
-                destinationPosition = candidates[which].position
-                calculateRoute(truckProfileStore.load())
-            }
+            .setAdapter(adapter) { _, which -> onChosen(candidates[which]) }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
+    // ------------------------------------------------------------------
+    // Truck-legal routing
+    // ------------------------------------------------------------------
+
     private fun calculateRoute(profile: TruckProfile) {
         val destination = destinationPosition ?: return
 
-        routeRepository.planTruckRoute(currentPosition, destination, profile) { result ->
+        routeRepository.planTruckRoute(currentPosition, destination, profile, waypoints.map { it.first }) { result ->
             when (result) {
                 is RouteResult.Success -> {
                     plannedRoute = result.route
                     drawRoute(result.route)
                     showRouteSummary(result.route)
+                    destinationLabel?.let { label -> recentDestinationsStore.record(label, destination) }
                 }
                 is RouteResult.Error ->
                     Snackbar.make(binding.root, result.message.ifBlank { getString(R.string.error_routing_generic) }, Snackbar.LENGTH_LONG).show()
@@ -380,7 +503,10 @@ class MainActivity : AppCompatActivity() {
         drawnRoute?.remove()
         drawnRoute = null
         destinationPosition = null
+        destinationLabel = null
         plannedRoute = null
+        waypoints.clear()
+        updateWaypointsUi()
 
         binding.destInput.text?.clear()
         binding.idleState.visibility = View.VISIBLE
@@ -410,6 +536,22 @@ class MainActivity : AppCompatActivity() {
         binding.activeNavOverlay.visibility = View.VISIBLE
         binding.activeNavBottomBar.visibility = View.VISIBLE
 
+        attachProgressTracker(route)
+
+        locationTracker.start(intervalMillis = 1000L) { location, bearing ->
+            currentPosition = location
+            progressTracker?.onLocationUpdate(location)
+            // zoom/tilt deliberately omitted here (left null = unchanged) so a pinch-zoom
+            // or tilt gesture the driver made isn't reset on the next GPS tick.
+            if (isCameraFollowing) {
+                tomTomMap?.moveCamera(
+                    CameraOptions(position = location.toGeoPoint(), rotation = bearing.toDouble())
+                )
+            }
+        }
+    }
+
+    private fun attachProgressTracker(route: TruckRoute) {
         progressTracker = RouteProgressTracker(route, object : RouteProgressTracker.Listener {
             override fun onInstructionChanged(instruction: RouteInstruction) {
                 runOnUiThread { binding.navInstructionText.text = instruction.text }
@@ -423,7 +565,8 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     val minutesLeft = (etaMillis - System.currentTimeMillis()).coerceAtLeast(0) / 60000
                     binding.activeEtaText.text = formatDuration(minutesLeft.toInt())
-                    binding.activeDistText.text = "%.1f mi".format(distanceRemainingMeters * METERS_TO_MILES)
+                    val arrivalClock = SimpleDateFormat("h:mm a", Locale.US).format(etaMillis)
+                    binding.activeDistText.text = "%.1f mi · %s".format(distanceRemainingMeters * METERS_TO_MILES, arrivalClock)
                 }
             }
 
@@ -433,17 +576,27 @@ class MainActivity : AppCompatActivity() {
                     endNavigation()
                 }
             }
-        })
 
-        locationTracker.start(intervalMillis = 1000L) { location, bearing ->
-            currentPosition = location
-            progressTracker?.onLocationUpdate(location)
-            // zoom/tilt deliberately omitted here (left null = unchanged) so a pinch-zoom
-            // or tilt gesture the driver made isn't reset on the next GPS tick.
-            if (isCameraFollowing) {
-                tomTomMap?.moveCamera(
-                    CameraOptions(position = location.toGeoPoint(), rotation = bearing.toDouble())
-                )
+            override fun onRouteDeviated() {
+                runOnUiThread { rerouteFromCurrentPosition() }
+            }
+        })
+    }
+
+    private fun rerouteFromCurrentPosition() {
+        if (!isNavigating) return
+        val destination = destinationPosition ?: return
+
+        voiceGuidanceEngine.speak("Recalculating route.")
+        routeRepository.planTruckRoute(currentPosition, destination, truckProfileStore.load(), waypoints.map { it.first }) { result ->
+            when (result) {
+                is RouteResult.Success -> {
+                    plannedRoute = result.route
+                    drawRoute(result.route)
+                    attachProgressTracker(result.route)
+                }
+                is RouteResult.Error ->
+                    Snackbar.make(binding.root, "Reroute failed: ${result.message}", Snackbar.LENGTH_LONG).show()
             }
         }
     }
