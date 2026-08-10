@@ -46,8 +46,11 @@ jobs:
       - name: Locate APK
         id: apk
         run: |
+          # `uses:` steps below (upload-artifact, action-gh-release) resolve paths
+          # relative to GITHUB_WORKSPACE, not this job's working-directory default,
+          # so this must be repo-root-relative, not just relative to this step's cwd.
           APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
-          echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "path=android/TruckNav/$APK_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
