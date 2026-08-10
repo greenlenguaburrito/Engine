@@ -1,0 +1,9 @@
+# Copy this file to "local.properties" (same directory) and fill in real values.
+# local.properties is gitignored — it must never be committed.
+
+# Path to your Android SDK (Android Studio fills this in automatically).
+sdk.dir=/path/to/Android/sdk
+
+# Your personal TomTom API key from https://developer.tomtom.com/
+# Get one free at https://developer.tomtom.com/user/register
+tomtom.api.key=YOUR_TOMTOM_API_KEY_HERE
