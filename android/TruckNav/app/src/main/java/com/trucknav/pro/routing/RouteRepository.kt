@@ -1,8 +1,12 @@
 package com.trucknav.pro.routing
 
+import android.os.Handler
+import android.os.Looper
 import com.trucknav.pro.BuildConfig
 import com.trucknav.pro.model.LatLng
 import com.trucknav.pro.model.RouteInstruction
+import com.trucknav.pro.model.TrafficSegment
+import com.trucknav.pro.model.TrafficSeverity
 import com.trucknav.pro.model.TruckProfile
 import com.trucknav.pro.model.TruckRoute
 import okhttp3.Call
@@ -31,15 +35,24 @@ sealed class RouteResult {
 class RouteRepository {
 
     private val client = OkHttpClient()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun planTruckRoute(
         origin: LatLng,
         destination: LatLng,
         profile: TruckProfile,
+        waypoints: List<LatLng> = emptyList(),
         onResult: (RouteResult) -> Unit
     ) {
-        val path = "https://api.tomtom.com/routing/1/calculateRoute/" +
-            "${origin.latitude},${origin.longitude}:${destination.latitude},${destination.longitude}/json"
+        // OkHttp callbacks fire on a background thread, but callers (drawing the
+        // route on TomTomMap, updating views) need the main thread -- hop back to it.
+        val deliver: (RouteResult) -> Unit = { result -> mainHandler.post { onResult(result) } }
+
+        // TomTom's calculateRoute endpoint takes any number of colon-separated
+        // "lat,lon" stops in order: origin:stop1:stop2:...:destination.
+        val stops = (listOf(origin) + waypoints + destination)
+            .joinToString(":") { "${it.latitude},${it.longitude}" }
+        val path = "https://api.tomtom.com/routing/1/calculateRoute/$stops/json"
 
         val urlBuilder = path.toHttpUrl().newBuilder()
             .addQueryParameter("key", BuildConfig.TOMTOM_API_KEY)
@@ -52,6 +65,7 @@ class RouteRepository {
             .addQueryParameter("computeTravelTimeFor", "all")
             .addQueryParameter("instructionsType", "text")
             .addQueryParameter("language", "en-US")
+            .addQueryParameter("sectionType", "traffic")
 
         if (profile.hazmat) {
             urlBuilder.addQueryParameter("vehicleLoadType", "otherHazmatExplosive")
@@ -61,21 +75,22 @@ class RouteRepository {
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                onResult(RouteResult.Error(e.message ?: "Network error"))
+                deliver(RouteResult.Error(e.message ?: "Network error"))
             }
 
             override fun onResponse(call: Call, response: Response) {
                 response.use { resp ->
                     val body = resp.body?.string()
                     if (!resp.isSuccessful || body == null) {
-                        onResult(RouteResult.Error("Routing request failed (${resp.code})"))
+                        deliver(RouteResult.Error("Routing request failed (${resp.code})"))
                         return
                     }
-                    try {
-                        onResult(RouteResult.Success(parseRoute(body)))
+                    val parsed = try {
+                        RouteResult.Success(parseRoute(body))
                     } catch (e: Exception) {
-                        onResult(RouteResult.Error("Could not parse route: ${e.message}"))
+                        RouteResult.Error("Could not parse route: ${e.message}")
                     }
+                    deliver(parsed)
                 }
             }
         })
@@ -105,11 +120,23 @@ class RouteRepository {
                 val message = instruction.optString("message", "")
                 val point = instruction.optJSONObject("point") ?: continue
                 if (message.isBlank()) continue
+
+                // maneuver is a code like "SHARP_LEFT" / "MAKE_UTURN" / "TRY_MAKE_UTURN"; when it's
+                // missing, fall back to the raw turn angle (-180 = U-turn, beyond +/-135 = a sharp
+                // turn even if not flagged as one). Neither field carries grade/elevation data, so
+                // this can only flag turn geometry, not steep grades or runaway-truck ramps.
+                val maneuver = instruction.optString("maneuver").takeIf { it.isNotBlank() }
+                val turnAngle = instruction.optDouble("turnAngleInDecimalDegrees", Double.NaN)
+                val isSharpTurn = maneuver in SHARP_MANEUVERS ||
+                    (!turnAngle.isNaN() && kotlin.math.abs(turnAngle) >= SHARP_TURN_ANGLE_DEGREES)
+
                 instructions.add(
                     RouteInstruction(
                         text = message,
                         distanceFromRouteStartMeters = instruction.optDouble("routeOffsetInMeters", 0.0),
-                        point = LatLng(point.getDouble("latitude"), point.getDouble("longitude"))
+                        point = LatLng(point.getDouble("latitude"), point.getDouble("longitude")),
+                        maneuver = maneuver,
+                        isSharpTurn = isSharpTurn
                     )
                 )
             }
@@ -117,13 +144,41 @@ class RouteRepository {
 
         val travelTimeSeconds = summary.getLong("travelTimeInSeconds")
 
+        val trafficSegments = mutableListOf<TrafficSegment>()
+        val sections = route.optJSONArray("sections")
+        if (sections != null) {
+            for (i in 0 until sections.length()) {
+                val section = sections.getJSONObject(i)
+                if (section.optString("sectionType") != "TRAFFIC") continue
+                val start = section.optInt("startPointIndex", -1)
+                val end = section.optInt("endPointIndex", -1)
+                if (start < 0 || end <= start) continue
+                // magnitudeOfDelay: 0=unknown, 1=minor, 2=moderate, 3=major, 4=closure/indefinite.
+                val severity = when (section.optInt("magnitudeOfDelay", 0)) {
+                    2 -> TrafficSeverity.MODERATE
+                    3 -> TrafficSeverity.MAJOR
+                    4 -> TrafficSeverity.CLOSURE
+                    else -> null // skip unknown/minor delays -- not worth highlighting on the map
+                }
+                if (severity != null) {
+                    trafficSegments.add(TrafficSegment(start, end, severity))
+                }
+            }
+        }
+
         return TruckRoute(
             path = path,
             instructions = instructions,
             distanceMeters = summary.getDouble("lengthInMeters"),
             travelTimeSeconds = travelTimeSeconds,
             trafficDelaySeconds = summary.optLong("trafficDelayInSeconds", 0L),
-            arrivalTimeMillis = System.currentTimeMillis() + travelTimeSeconds * 1000
+            arrivalTimeMillis = System.currentTimeMillis() + travelTimeSeconds * 1000,
+            trafficSegments = trafficSegments
         )
+    }
+
+    private companion object {
+        val SHARP_MANEUVERS = setOf("SHARP_LEFT", "SHARP_RIGHT", "MAKE_UTURN", "TRY_MAKE_UTURN")
+        const val SHARP_TURN_ANGLE_DEGREES = 135.0
     }
 }

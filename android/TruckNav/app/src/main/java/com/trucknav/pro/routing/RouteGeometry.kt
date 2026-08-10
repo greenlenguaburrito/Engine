@@ -23,6 +23,17 @@ object RouteGeometry {
     /** Distance from the start of [path] to the vertex nearest [target]. */
     fun distanceFromStartTo(path: List<LatLng>, cumulative: DoubleArray, target: LatLng): Double {
         if (path.isEmpty()) return 0.0
+        return cumulative[nearestVertexIndex(path, target)]
+    }
+
+    /** How far [target] is from the closest point on [path] -- used to detect the driver going off-route. */
+    fun distanceOffRoute(path: List<LatLng>, target: LatLng): Double {
+        if (path.isEmpty()) return 0.0
+        val index = nearestVertexIndex(path, target)
+        return path[index].distanceTo(target)
+    }
+
+    private fun nearestVertexIndex(path: List<LatLng>, target: LatLng): Int {
         var bestIndex = 0
         var bestDist = Double.MAX_VALUE
         for (i in path.indices) {
@@ -32,7 +43,7 @@ object RouteGeometry {
                 bestIndex = i
             }
         }
-        return cumulative[bestIndex]
+        return bestIndex
     }
 
     /**

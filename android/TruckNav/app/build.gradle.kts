@@ -40,6 +40,15 @@ android {
         // Gradle can't pick one on its own. "extended" needs Artifactory credentials
         // we don't have, so pin to the free/public "complete" flavor.
         missingDimensionStrategy("tomtom-sdk-version", "complete")
+
+        // Without this, the APK bundles native (.so) libraries for every ABI
+        // (arm64-v8a, armeabi-v7a, x86, x86_64), ballooning it past 250MB for a
+        // debug build. Virtually every real Android phone since ~2017 is
+        // arm64-v8a, so restrict to that -- if you're testing on an x86_64
+        // emulator, add it back here.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {

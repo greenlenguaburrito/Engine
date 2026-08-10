@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp" android:height="32dp" android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Filled circle marker background. -->
+    <path android:fillColor="#EA580C"
+        android:pathData="M2,12 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+    <!-- Simple loading-bay glyph: a doorway with an inward arrow. -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M6,7 L11,7 L11,17 L6,17 Z M7.5,8.5 L7.5,15.5 L9.5,15.5 L9.5,8.5 Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M12,12 L16,9 L16,11 L18,11 L18,13 L16,13 L16,15 Z" />
+</vector>

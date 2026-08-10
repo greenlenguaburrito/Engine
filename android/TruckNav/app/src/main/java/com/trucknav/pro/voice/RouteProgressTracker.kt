@@ -22,12 +22,14 @@ class RouteProgressTracker(
         fun onAnnounce(text: String)
         fun onProgress(distanceRemainingMeters: Double, etaMillis: Long)
         fun onArrived()
+        fun onRouteDeviated()
     }
 
     private val cumulative = RouteGeometry.cumulativeDistances(route.path)
     private var currentInstructionIndex = 0
     private val announced = mutableSetOf<Pair<Int, Double>>()
     private var arrived = false
+    private var deviated = false
 
     init {
         route.instructions.firstOrNull()?.let { listener.onInstructionChanged(it) }
@@ -35,7 +37,13 @@ class RouteProgressTracker(
 
     /** Feed each new GPS fix in here while navigation is active. */
     fun onLocationUpdate(current: LatLng) {
-        if (route.instructions.isEmpty() || arrived) return
+        if (route.instructions.isEmpty() || arrived || deviated) return
+
+        if (RouteGeometry.distanceOffRoute(route.path, current) > OFF_ROUTE_THRESHOLD_METERS) {
+            deviated = true
+            listener.onRouteDeviated()
+            return
+        }
 
         val progressMeters = RouteGeometry.progressAlongRoute(route.path, cumulative, current)
 
@@ -49,11 +57,24 @@ class RouteProgressTracker(
         val instruction = route.instructions[currentInstructionIndex]
         val remaining = (instruction.distanceFromRouteStartMeters - progressMeters).coerceAtLeast(0.0)
 
-        for ((thresholdMeters, prefix) in ANNOUNCEMENT_POINTS) {
+        // Sharp turns/U-turns get one extra, earlier announcement and a spoken caution --
+        // a full-size semi needs more warning and more room than a passenger car does.
+        val points = if (instruction.isSharpTurn) SHARP_TURN_ANNOUNCEMENT_POINTS else ANNOUNCEMENT_POINTS
+        for ((thresholdMeters, prefix) in points) {
             val key = currentInstructionIndex to thresholdMeters
             if (remaining <= thresholdMeters && key !in announced) {
                 announced += key
-                listener.onAnnounce(prefix + instruction.text)
+                val text = if (instruction.isSharpTurn) {
+                    val hazard = if (instruction.maneuver?.contains("UTURN") == true) {
+                        "Caution, U-turn ahead."
+                    } else {
+                        "Caution, sharp turn ahead."
+                    }
+                    "$prefix$hazard ${instruction.text}"
+                } else {
+                    prefix + instruction.text
+                }
+                listener.onAnnounce(text)
             }
         }
 
@@ -70,6 +91,7 @@ class RouteProgressTracker(
 
     private companion object {
         const val ARRIVAL_RADIUS_METERS = 40.0
+        const val OFF_ROUTE_THRESHOLD_METERS = 80.0
 
         // (trigger distance in meters, spoken prefix). Checked from largest to smallest.
         val ANNOUNCEMENT_POINTS = listOf(
@@ -78,5 +100,8 @@ class RouteProgressTracker(
             300.0 to "In 1,000 feet, ",
             60.0 to ""
         )
+
+        // Sharp turns/U-turns add a 2-mile heads-up on top of the normal announcement points.
+        val SHARP_TURN_ANNOUNCEMENT_POINTS = listOf(3218.0 to "In 2 miles, ") + ANNOUNCEMENT_POINTS
     }
 }

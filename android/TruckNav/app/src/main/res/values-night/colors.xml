@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand/accent colors stay the same in dark mode; only surfaces and text flip.
+         Every layout references these by name, so this file alone re-themes the app. -->
+    <color name="truck_blue">#3B82F6</color>
+    <color name="truck_blue_dark">#1E3A8A</color>
+    <color name="truck_red">#F87171</color>
+    <color name="truck_green">#22C55E</color>
+    <color name="truck_orange">#FB923C</color>
+    <color name="truck_slate">#334155</color>
+    <color name="truck_slate_light">#475569</color>
+    <color name="surface_white">#1E293B</color>
+    <color name="surface_gray">#0F172A</color>
+    <color name="text_primary">#F1F5F9</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_muted">#64748B</color>
+    <color name="hazmat_red_bg">#3F1D1D</color>
+    <color name="hazmat_red_border">#7F1D1D</color>
+    <color name="traffic_moderate">#F59E0B</color>
+    <color name="traffic_major">#F87171</color>
+    <color name="traffic_closure">#7F1D1D</color>
+    <color name="pill_blue_bg">#1E3A5F</color>
+    <color name="pill_blue_border">#2563EB</color>
+    <color name="divider">#334155</color>
+</resources>

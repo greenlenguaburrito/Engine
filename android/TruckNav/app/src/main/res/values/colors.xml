@@ -14,4 +14,10 @@
     <color name="text_muted">#9CA3AF</color>
     <color name="hazmat_red_bg">#FEF2F2</color>
     <color name="hazmat_red_border">#FECACA</color>
+    <color name="traffic_moderate">#F59E0B</color>
+    <color name="traffic_major">#EF4444</color>
+    <color name="traffic_closure">#7F1D1D</color>
+    <color name="pill_blue_bg">#EFF6FF</color>
+    <color name="pill_blue_border">#BFDBFE</color>
+    <color name="divider">#E5E7EB</color>
 </resources>
