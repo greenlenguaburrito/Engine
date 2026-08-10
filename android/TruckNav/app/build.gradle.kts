@@ -6,8 +6,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Load the TomTom API key from local.properties (gitignored) so it never lands in
-// version control. Falls back to a TOMTOM_API_KEY env var for CI use.
+// TomTom API key. Checked in three places, in order: local.properties (gitignored,
+// for a personal override), a TOMTOM_API_KEY env var (for CI), then the hardcoded
+// default below. The default is a real personal/free-tier key committed at the
+// user's explicit request for a zero-setup build on this public repo — treat it as
+// already public and rotate it at https://developer.tomtom.com if usage looks abused.
 val localProperties = Properties().apply {
     val localPropertiesFile = rootProject.file("local.properties")
     if (localPropertiesFile.exists()) {
@@ -16,7 +19,7 @@ val localProperties = Properties().apply {
 }
 val tomtomApiKey: String = (localProperties.getProperty("tomtom.api.key")
     ?: System.getenv("TOMTOM_API_KEY")
-    ?: "").trim()
+    ?: "z14dyywuI1EXZvrXfpV90HXNlbz2eNQR").trim()
 
 android {
     namespace = "com.trucknav.pro"

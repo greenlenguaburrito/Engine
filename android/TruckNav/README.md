@@ -6,13 +6,16 @@ guidance. It's the native-app version of the single-file HTML prototype this rep
 from — same TomTom-powered routing/traffic idea, but a real installable app with on-device
 text-to-speech guidance instead of a browser tab.
 
-## ⚠️ Rotate your TomTom API key first
+## ⚠️ The API key in this repo is public — that was a deliberate tradeoff
 
-The prototype HTML file this app is based on had a **real TomTom API key hardcoded in plain
-text**. Anything pasted into a chat or committed to a repo should be treated as leaked —
-go to [my.tomtom.com](https://developer.tomtom.com/user/register) and regenerate/revoke that
-key before using this app, then use the fresh key below. This project never commits your key
-to git (see "API key setup").
+At the repo owner's explicit request, `app/build.gradle.kts` bakes in a real TomTom API key
+as its default value, so the app and the CI build below work with zero setup. **Because this
+repo is public, that key is effectively public too** — treat it as already leaked, the same
+way the key hardcoded in the original HTML prototype should be. If usage/billing on that key
+ever looks abused, rotate it at [developer.tomtom.com](https://developer.tomtom.com) and either
+swap the new one directly into `build.gradle.kts`, or override it locally without touching
+git history: copy `local.properties.template` to `local.properties` and set `tomtom.api.key=`
+there (gitignored, takes priority over the hardcoded default) — see "Setup" below.
 
 ## What's implemented
 
@@ -48,21 +51,26 @@ android/TruckNav/
 
 ## Setup
 
-1. **Get a TomTom API key** (free tier is enough to develop with):
-   https://developer.tomtom.com/user/register
-2. **Open `android/TruckNav/` in Android Studio** (Koala/2024.x or newer). Let it prompt you
-   to create the Gradle wrapper if one isn't present, or run `gradle wrapper` once from this
-   directory if you have Gradle installed locally.
-3. **Add your API key**: copy `local.properties.template` to `local.properties` in this same
-   directory and fill in `tomtom.api.key=<your key>`. `local.properties` is gitignored — it
-   will never be committed. Android Studio also writes your `sdk.dir` into this same file.
-4. **Sync Gradle** and run on a device or emulator with Google Play services (required for
-   location updates) and internet access.
+No API key setup is required — a working key is already baked into `app/build.gradle.kts`.
 
-### CI / command line builds
+1. **Open `android/TruckNav/` in Android Studio** (Koala/2024.x or newer) and let it sync.
+   The Gradle wrapper is committed, so no local Gradle install is required.
+2. **Run** on a device or emulator with Google Play services (required for location updates)
+   and internet access.
 
-`local.properties` won't exist outside your machine. Set the `TOMTOM_API_KEY` environment
-variable instead — `app/build.gradle.kts` falls back to it automatically.
+Want to use your own key instead of the committed default? Copy `local.properties.template`
+to `local.properties` and set `tomtom.api.key=<your key>` (gitignored, overrides the default) —
+or set a `TOMTOM_API_KEY` environment variable, which `app/build.gradle.kts` also checks first.
+
+## Building an installable APK without a computer
+
+Every push to this branch triggers `.github/workflows/android-build.yml`, which builds a debug
+APK on GitHub's servers and publishes it to this repo's **Releases** page
+(github.com/greenlenguaburrito/Engine/releases, tag `truck-nav-debug`) as a direct-download
+`.apk` file. From a phone: open that Releases page in a browser, download the APK, then install
+it (Android will prompt you to allow installs from your browser/file manager the first time).
+You can also trigger a build on demand from the **Actions** tab → "Build TruckNav APK" →
+**Run workflow**, without pushing a new commit.
 
 ## Known caveats / next steps for whoever picks this up
 
