@@ -17,6 +17,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
@@ -63,6 +64,7 @@ import com.tomtom.sdk.map.display.marker.Marker
 import com.tomtom.sdk.map.display.marker.MarkerOptions
 import com.tomtom.sdk.map.display.route.Route as MapRoute
 import com.tomtom.sdk.map.display.route.RouteOptions
+import com.tomtom.sdk.map.display.style.StandardStyles
 import com.tomtom.sdk.map.display.ui.MapFragment
 
 class MainActivity : AppCompatActivity() {
@@ -107,6 +109,8 @@ class MainActivity : AppCompatActivity() {
     // per-tick camera updates below so pinch-zoom is never overridden either.
     private var isCameraFollowing = true
 
+    private var isSatelliteView = false
+
     private val requestLocationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -150,19 +154,27 @@ class MainActivity : AppCompatActivity() {
      * existing fixed padding/margin.
      */
     private fun setupWindowInsets() {
-        val navSheetBasePadding = binding.navSheet.paddingBottom
+        // Make edge-to-edge explicit instead of relying on it being implied by targetSdk 35 --
+        // this is what actually makes the window deliver non-zero system bar insets below.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Padding on navSheetContent (a plain LinearLayout), not the navSheet CardView itself --
+        // CardView's own padding interacts with its shadow/corner rendering, so push the inset
+        // onto ordinary content padding instead.
+        val navSheetContentBasePadding = binding.navSheetContent.paddingBottom
         val activeNavBarBaseMargin = (binding.activeNavBottomBar.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val systemBarsInsetBottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
 
-            binding.navSheet.updatePadding(bottom = navSheetBasePadding + systemBarsInsetBottom)
+            binding.navSheetContent.updatePadding(bottom = navSheetContentBasePadding + systemBarsInsetBottom)
             binding.activeNavBottomBar.updateLayoutParams<ViewGroup.MarginLayoutParams> {
                 bottomMargin = activeNavBarBaseMargin + systemBarsInsetBottom
             }
 
             insets
         }
+        ViewCompat.requestApplyInsets(binding.root)
     }
 
     // ------------------------------------------------------------------
@@ -242,6 +254,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.dimensionsButton.setOnClickListener { showTruckProfileDialog() }
         binding.trafficButton.setOnClickListener { toggleTraffic() }
+        binding.satelliteButton.setOnClickListener { toggleSatelliteView() }
         binding.recenterButton.setOnClickListener { recenterCamera() }
         binding.stepsButton.setOnClickListener { showDirectionsList() }
         binding.activeNavOverlay.setOnClickListener { showDirectionsList() }
@@ -277,6 +290,15 @@ class MainActivity : AppCompatActivity() {
         )
         val message = if (enabled) "Live traffic & incidents enabled" else "Live traffic disabled"
         Snackbar.make(binding.root, message, Snackbar.LENGTH_SHORT).show()
+    }
+
+    private fun toggleSatelliteView() {
+        val map = tomTomMap ?: return
+        isSatelliteView = !isSatelliteView
+        map.loadStyle(if (isSatelliteView) StandardStyles.SATELLITE else StandardStyles.BROWSING)
+        binding.satelliteButton.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            ContextCompat.getColor(this, if (isSatelliteView) R.color.truck_orange else android.R.color.white)
+        )
     }
 
     // ------------------------------------------------------------------

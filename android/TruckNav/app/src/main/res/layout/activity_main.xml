@@ -199,6 +199,21 @@
             app:backgroundTint="@android:color/white" />
     </LinearLayout>
 
+    <!-- ===================== Map style (satellite toggle) FAB ===================== -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/satelliteButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        android:contentDescription="@string/btn_satellite"
+        android:src="@drawable/ic_satellite"
+        app:fabSize="mini"
+        app:tint="@color/text_primary"
+        app:backgroundTint="@android:color/white"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/recenterButton" />
+
     <!-- ===================== Recenter FAB ===================== -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/recenterButton"
@@ -225,6 +240,7 @@
         app:layout_constraintBottom_toBottomOf="parent">
 
         <LinearLayout
+            android:id="@+id/navSheetContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"

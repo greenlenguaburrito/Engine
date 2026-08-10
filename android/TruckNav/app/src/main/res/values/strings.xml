@@ -8,6 +8,7 @@
 
     <string name="btn_dimensions">Dimensions</string>
     <string name="btn_traffic">Live Traffic</string>
+    <string name="btn_satellite">Satellite view</string>
     <string name="btn_start_nav">Start Nav</string>
     <string name="btn_end_nav">End</string>
 
