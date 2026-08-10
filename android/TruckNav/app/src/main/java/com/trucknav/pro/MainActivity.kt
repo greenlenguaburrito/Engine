@@ -64,7 +64,9 @@ import com.tomtom.sdk.map.display.marker.Marker
 import com.tomtom.sdk.map.display.marker.MarkerOptions
 import com.tomtom.sdk.map.display.route.Route as MapRoute
 import com.tomtom.sdk.map.display.route.RouteOptions
+import com.tomtom.sdk.map.display.style.LoadingStyleFailure
 import com.tomtom.sdk.map.display.style.StandardStyles
+import com.tomtom.sdk.map.display.style.StyleLoadingCallback
 import com.tomtom.sdk.map.display.ui.MapFragment
 
 class MainActivity : AppCompatActivity() {
@@ -295,7 +297,13 @@ class MainActivity : AppCompatActivity() {
     private fun toggleSatelliteView() {
         val map = tomTomMap ?: return
         isSatelliteView = !isSatelliteView
-        map.loadStyle(if (isSatelliteView) StandardStyles.SATELLITE else StandardStyles.BROWSING)
+        map.loadStyle(
+            if (isSatelliteView) StandardStyles.SATELLITE else StandardStyles.BROWSING,
+            object : StyleLoadingCallback {
+                override fun onSuccess() = Unit
+                override fun onFailure(failure: LoadingStyleFailure) = Unit
+            }
+        )
         binding.satelliteButton.backgroundTintList = android.content.res.ColorStateList.valueOf(
             ContextCompat.getColor(this, if (isSatelliteView) R.color.truck_orange else android.R.color.white)
         )
