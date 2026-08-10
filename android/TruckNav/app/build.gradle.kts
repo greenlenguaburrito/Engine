@@ -86,21 +86,31 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
 
     // --- TomTom SDK -----------------------------------------------------
-    // NOTE: TomTom revs these frequently. If Gradle sync reports a version
-    // that no longer resolves, check the current numbers at
-    // https://docs.tomtom.com/maps/android/getting-started/project-setup
-    // and https://docs.tomtom.com/navigation/android/getting-started/project-setup
-    // and bump them here — the artifact/group names themselves are stable.
+    // Versions confirmed directly against repositories.tomtom.com's
+    // maven-metadata.xml (its <latest> tag) rather than docs pages, which
+    // lag. TomTom ships two version "families" that must each be pinned to
+    // their own latest, not mixed: init/location-provider on the 2.x line,
+    // map-display/search/routing on the 1.26.x line. Mixing older releases
+    // across the two pulls in both the old "sensoris" telemetry artifact and
+    // its renamed replacement "telemetry-protobuf-internal" at once, which
+    // fails the build with duplicate-class errors -- excluded below as a
+    // second layer of protection even when versions are aligned.
     val tomtomInitVersion = "2.4.2"
-    val tomtomMapsVersion = "1.26.3"
-    val tomtomRoutingVersion = "1.25.6"
-    val tomtomSearchVersion = "1.26.3"
+    val tomtomMapsVersion = "1.26.7"
+    val tomtomRoutingVersion = "1.26.7"
+    val tomtomSearchVersion = "1.26.7"
 
     implementation("com.tomtom.sdk:init:$tomtomInitVersion")
-    implementation("com.tomtom.sdk.maps:map-display:$tomtomMapsVersion")
-    implementation("com.tomtom.sdk.location:provider-android:$tomtomMapsVersion")
-    implementation("com.tomtom.sdk.search:search-online:$tomtomSearchVersion")
-    implementation("com.tomtom.sdk.routing:route-planner-online:$tomtomRoutingVersion")
+    implementation("com.tomtom.sdk.maps:map-display:$tomtomMapsVersion") {
+        exclude(group = "com.tomtom.sdk.telemetry", module = "sensoris")
+    }
+    implementation("com.tomtom.sdk.location:provider-android:$tomtomInitVersion")
+    implementation("com.tomtom.sdk.search:search-online:$tomtomSearchVersion") {
+        exclude(group = "com.tomtom.sdk.telemetry", module = "sensoris")
+    }
+    implementation("com.tomtom.sdk.routing:route-planner-online:$tomtomRoutingVersion") {
+        exclude(group = "com.tomtom.sdk.telemetry", module = "sensoris")
+    }
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
