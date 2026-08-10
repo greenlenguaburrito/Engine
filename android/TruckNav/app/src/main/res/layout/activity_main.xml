@@ -10,7 +10,7 @@
     <!-- TomTom map fills the screen; everything else floats above it. The MapFragment
          itself is added programmatically in MainActivity (MapFragment.newInstance(
          MapOptions(mapKey = ...))) rather than via android:name here, because MapOptions
-         requires the API key explicitly -- inflating MapFragment straight from XML has
+         requires the API key explicitly: inflating MapFragment straight from XML has
          no way to supply it and crashes with "Map key was empty". -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/mapFragmentContainer"
