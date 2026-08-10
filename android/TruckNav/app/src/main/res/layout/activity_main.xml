@@ -7,10 +7,13 @@
     android:layout_height="match_parent"
     android:background="@color/surface_gray">
 
-    <!-- TomTom map fills the screen; everything else floats above it. -->
+    <!-- TomTom map fills the screen; everything else floats above it. The MapFragment
+         itself is added programmatically in MainActivity (MapFragment.newInstance(
+         MapOptions(mapKey = ...))) rather than via android:name here, because MapOptions
+         requires the API key explicitly -- inflating MapFragment straight from XML has
+         no way to supply it and crashes with "Map key was empty". -->
     <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/mapFragment"
-        android:name="com.tomtom.sdk.map.display.ui.MapFragment"
+        android:id="@+id/mapFragmentContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         app:layout_constraintTop_toTopOf="parent"

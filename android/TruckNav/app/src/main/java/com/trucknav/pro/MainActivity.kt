@@ -31,6 +31,7 @@ import java.util.Locale
 // See the package-path note in RouteRepository.kt: verify these against
 // Android Studio's import quick-fix after Gradle sync if unresolved.
 import com.tomtom.sdk.location.GeoPoint
+import com.tomtom.sdk.map.display.MapOptions
 import com.tomtom.sdk.map.display.TomTomMap
 import com.tomtom.sdk.map.display.camera.CameraOptions
 import com.tomtom.sdk.map.display.route.Route as MapRoute
@@ -78,7 +79,10 @@ class MainActivity : AppCompatActivity() {
         locationTracker = LocationTracker(this)
         voiceGuidanceEngine = VoiceGuidanceEngine(this)
 
-        val mapFragment = supportFragmentManager.findFragmentById(R.id.mapFragment) as MapFragment
+        val mapFragment = MapFragment.newInstance(MapOptions(mapKey = BuildConfig.TOMTOM_API_KEY))
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.mapFragmentContainer, mapFragment)
+            .commitNow()
         mapFragment.getMapAsync { map -> onMapReady(map) }
 
         setupListeners()
