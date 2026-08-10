@@ -12,6 +12,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.trucknav.pro.data.TruckProfileStore
 import com.trucknav.pro.databinding.ActivityMainBinding
 import com.trucknav.pro.location.LocationTracker
+import com.trucknav.pro.location.TomTomLocationProviderAdapter
 import com.trucknav.pro.model.LatLng
 import com.trucknav.pro.model.RouteInstruction
 import com.trucknav.pro.model.TruckProfile
@@ -34,6 +35,7 @@ import com.tomtom.sdk.location.GeoPoint
 import com.tomtom.sdk.map.display.MapOptions
 import com.tomtom.sdk.map.display.TomTomMap
 import com.tomtom.sdk.map.display.camera.CameraOptions
+import com.tomtom.sdk.map.display.location.LocationMarkerOptions
 import com.tomtom.sdk.map.display.route.Route as MapRoute
 import com.tomtom.sdk.map.display.route.RouteOptions
 import com.tomtom.sdk.map.display.ui.MapFragment
@@ -50,6 +52,7 @@ class MainActivity : AppCompatActivity() {
 
     private var tomTomMap: TomTomMap? = null
     private var trafficController: TrafficController? = null
+    private var locationProviderAdapter: TomTomLocationProviderAdapter? = null
 
     private var currentPosition = LatLng(34.5828, -117.4093) // fallback: Adelanto, CA
     private var destinationPosition: LatLng? = null
@@ -63,6 +66,7 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
                 centerOnDeviceLocation()
+                enableLocationMarkerIfPermitted()
             } else {
                 binding.originText.text = getString(R.string.permission_denied)
             }
@@ -97,6 +101,23 @@ class MainActivity : AppCompatActivity() {
         tomTomMap = map
         trafficController = TrafficController(map)
         map.moveCamera(CameraOptions(position = currentPosition.toGeoPoint(), zoom = 14.0))
+        enableLocationMarkerIfPermitted()
+    }
+
+    /** Shows the "you are here" dot on the map. Needs both the map and location permission ready. */
+    private fun enableLocationMarkerIfPermitted() {
+        if (locationProviderAdapter != null) return
+        val map = tomTomMap ?: return
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) return
+
+        val adapter = TomTomLocationProviderAdapter(this)
+        locationProviderAdapter = adapter
+        map.setLocationProvider(adapter)
+        map.enableLocationMarker(LocationMarkerOptions(type = LocationMarkerOptions.Type.Pointer))
+        adapter.enable()
     }
 
     private fun ensureLocationPermission() {
@@ -106,6 +127,7 @@ class MainActivity : AppCompatActivity() {
 
         if (granted) {
             centerOnDeviceLocation()
+            enableLocationMarkerIfPermitted()
         } else {
             binding.originText.setText(R.string.detecting_location)
             requestLocationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -336,6 +358,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         locationTracker.stop()
+        locationProviderAdapter?.close()
         voiceGuidanceEngine.shutdown()
     }
 

@@ -1,5 +1,7 @@
 package com.trucknav.pro.search
 
+import android.os.Handler
+import android.os.Looper
 import com.trucknav.pro.BuildConfig
 import com.trucknav.pro.model.LatLng
 import okhttp3.Call
@@ -28,8 +30,13 @@ sealed class DestinationResult {
 class SearchRepository {
 
     private val client = OkHttpClient()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun searchDestination(query: String, near: LatLng, onResult: (DestinationResult) -> Unit) {
+        // OkHttp callbacks fire on a background thread, but callers (Snackbar, then
+        // route planning which touches TomTomMap) need the main thread -- hop back to it.
+        val deliver: (DestinationResult) -> Unit = { result -> mainHandler.post { onResult(result) } }
+
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val url = "https://api.tomtom.com/search/2/search/$encodedQuery.json".toHttpUrl()
             .newBuilder()
@@ -41,19 +48,19 @@ class SearchRepository {
 
         client.newCall(Request.Builder().url(url).build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                onResult(DestinationResult.Error(e.message ?: "Network error"))
+                deliver(DestinationResult.Error(e.message ?: "Network error"))
             }
 
             override fun onResponse(call: Call, response: Response) {
                 response.use { resp ->
                     val body = resp.body?.string()
                     if (!resp.isSuccessful || body == null) {
-                        onResult(DestinationResult.Error("Search request failed (${resp.code})"))
+                        deliver(DestinationResult.Error("Search request failed (${resp.code})"))
                         return
                     }
                     val results = JSONObject(body).optJSONArray("results")
                     if (results == null || results.length() == 0) {
-                        onResult(DestinationResult.NoResults)
+                        deliver(DestinationResult.NoResults)
                         return
                     }
                     val first = results.getJSONObject(0)
@@ -62,7 +69,7 @@ class SearchRepository {
                         ?.takeIf { it.isNotBlank() }
                         ?: first.optJSONObject("poi")?.optString("name")
                         ?: query
-                    onResult(
+                    deliver(
                         DestinationResult.Success(
                             LatLng(position.getDouble("lat"), position.getDouble("lon")),
                             label

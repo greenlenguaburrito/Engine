@@ -1,5 +1,7 @@
 package com.trucknav.pro.routing
 
+import android.os.Handler
+import android.os.Looper
 import com.trucknav.pro.BuildConfig
 import com.trucknav.pro.model.LatLng
 import com.trucknav.pro.model.RouteInstruction
@@ -31,6 +33,7 @@ sealed class RouteResult {
 class RouteRepository {
 
     private val client = OkHttpClient()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun planTruckRoute(
         origin: LatLng,
@@ -38,6 +41,9 @@ class RouteRepository {
         profile: TruckProfile,
         onResult: (RouteResult) -> Unit
     ) {
+        // OkHttp callbacks fire on a background thread, but callers (drawing the
+        // route on TomTomMap, updating views) need the main thread -- hop back to it.
+        val deliver: (RouteResult) -> Unit = { result -> mainHandler.post { onResult(result) } }
         val path = "https://api.tomtom.com/routing/1/calculateRoute/" +
             "${origin.latitude},${origin.longitude}:${destination.latitude},${destination.longitude}/json"
 
@@ -61,21 +67,22 @@ class RouteRepository {
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                onResult(RouteResult.Error(e.message ?: "Network error"))
+                deliver(RouteResult.Error(e.message ?: "Network error"))
             }
 
             override fun onResponse(call: Call, response: Response) {
                 response.use { resp ->
                     val body = resp.body?.string()
                     if (!resp.isSuccessful || body == null) {
-                        onResult(RouteResult.Error("Routing request failed (${resp.code})"))
+                        deliver(RouteResult.Error("Routing request failed (${resp.code})"))
                         return
                     }
-                    try {
-                        onResult(RouteResult.Success(parseRoute(body)))
+                    val parsed = try {
+                        RouteResult.Success(parseRoute(body))
                     } catch (e: Exception) {
-                        onResult(RouteResult.Error("Could not parse route: ${e.message}"))
+                        RouteResult.Error("Could not parse route: ${e.message}")
                     }
+                    deliver(parsed)
                 }
             }
         })
