@@ -4,8 +4,14 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.ArrayAdapter
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.material.snackbar.Snackbar
@@ -19,6 +25,7 @@ import com.trucknav.pro.model.TruckProfile
 import com.trucknav.pro.model.TruckRoute
 import com.trucknav.pro.routing.RouteRepository
 import com.trucknav.pro.routing.RouteResult
+import com.trucknav.pro.search.DestinationCandidate
 import com.trucknav.pro.search.DestinationResult
 import com.trucknav.pro.search.SearchRepository
 import com.trucknav.pro.traffic.TrafficController
@@ -27,6 +34,7 @@ import com.trucknav.pro.voice.RouteProgressTracker
 import com.trucknav.pro.voice.VoiceGuidanceEngine
 import java.text.SimpleDateFormat
 import java.util.Locale
+import kotlin.math.roundToInt
 
 // --- TomTom Map Display SDK --------------------------------------------
 // See the package-path note in RouteRepository.kt: verify these against
@@ -35,6 +43,7 @@ import com.tomtom.sdk.location.GeoPoint
 import com.tomtom.sdk.map.display.MapOptions
 import com.tomtom.sdk.map.display.TomTomMap
 import com.tomtom.sdk.map.display.camera.CameraOptions
+import com.tomtom.sdk.map.display.gesture.MapPanningListener
 import com.tomtom.sdk.map.display.location.LocationMarkerOptions
 import com.tomtom.sdk.map.display.route.Route as MapRoute
 import com.tomtom.sdk.map.display.route.RouteOptions
@@ -61,6 +70,13 @@ class MainActivity : AppCompatActivity() {
 
     private var progressTracker: RouteProgressTracker? = null
     private var isNavigating = false
+
+    // While true, the camera auto-follows the driver's position during navigation.
+    // A manual pan gesture turns this off (see the MapPanningListener below) so the
+    // driver can look ahead on the map without it snapping back every second; the
+    // recenter button turns it back on. Zoom/tilt are intentionally left out of the
+    // per-tick camera updates below so pinch-zoom is never overridden either.
+    private var isCameraFollowing = true
 
     private val requestLocationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -102,6 +118,16 @@ class MainActivity : AppCompatActivity() {
         trafficController = TrafficController(map)
         map.moveCamera(CameraOptions(position = currentPosition.toGeoPoint(), zoom = 14.0))
         enableLocationMarkerIfPermitted()
+
+        // A manual drag means the driver wants to look around; stop fighting them
+        // with the auto-follow camera updates until they tap the recenter button.
+        map.addMapPanningListener(object : MapPanningListener {
+            override fun onMapPanningStarted() {
+                isCameraFollowing = false
+            }
+            override fun onMapPanningOngoing() = Unit
+            override fun onMapPanningEnded() = Unit
+        })
     }
 
     /** Shows the "you are here" dot on the map. Needs both the map and location permission ready. */
@@ -157,13 +183,20 @@ class MainActivity : AppCompatActivity() {
 
         binding.dimensionsButton.setOnClickListener { showTruckProfileDialog() }
         binding.trafficButton.setOnClickListener { toggleTraffic() }
-        binding.recenterButton.setOnClickListener {
-            tomTomMap?.moveCamera(CameraOptions(position = currentPosition.toGeoPoint(), zoom = 15.0, tilt = 0.0))
-        }
+        binding.recenterButton.setOnClickListener { recenterCamera() }
+        binding.stepsButton.setOnClickListener { showDirectionsList() }
+        binding.activeNavOverlay.setOnClickListener { showDirectionsList() }
 
         binding.startNavButton.setOnClickListener { startNavigation() }
         binding.cancelRouteButton.setOnClickListener { cancelRoute() }
         binding.endNavButton.setOnClickListener { endNavigation() }
+    }
+
+    private fun recenterCamera() {
+        isCameraFollowing = true
+        val zoom = if (isNavigating) 17.5 else 15.0
+        val tilt = if (isNavigating) 60.0 else 0.0
+        tomTomMap?.moveCamera(CameraOptions(position = currentPosition.toGeoPoint(), zoom = zoom, tilt = tilt))
     }
 
     private fun showTruckProfileDialog() {
@@ -203,8 +236,12 @@ class MainActivity : AppCompatActivity() {
         searchRepository.searchDestination(query, currentPosition) { result ->
             when (result) {
                 is DestinationResult.Success -> {
-                    destinationPosition = result.position
-                    calculateRoute(truckProfileStore.load())
+                    if (result.candidates.size == 1) {
+                        destinationPosition = result.candidates[0].position
+                        calculateRoute(truckProfileStore.load())
+                    } else {
+                        showDestinationPicker(result.candidates)
+                    }
                 }
                 DestinationResult.NoResults ->
                     Snackbar.make(binding.root, R.string.error_address_not_found, Snackbar.LENGTH_SHORT).show()
@@ -212,6 +249,30 @@ class MainActivity : AppCompatActivity() {
                     Snackbar.make(binding.root, result.message, Snackbar.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /** Lets the driver pick which match they meant (e.g. which "Amazon" of several nearby). */
+    private fun showDestinationPicker(candidates: List<DestinationCandidate>) {
+        val adapter = object : ArrayAdapter<DestinationCandidate>(
+            this, android.R.layout.simple_list_item_2, android.R.id.text1, candidates
+        ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent)
+                val candidate = candidates[position]
+                view.findViewById<TextView>(android.R.id.text1).text = candidate.primaryLabel
+                view.findViewById<TextView>(android.R.id.text2).text = candidate.secondaryLabel.orEmpty()
+                return view
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Choose a destination")
+            .setAdapter(adapter) { _, which ->
+                destinationPosition = candidates[which].position
+                calculateRoute(truckProfileStore.load())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun calculateRoute(profile: TruckProfile) {
@@ -264,6 +325,54 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Full turn-by-turn step list for the planned route, opened from the "steps" button or the nav banner. */
+    private fun showDirectionsList() {
+        val route = plannedRoute
+        if (route == null || route.instructions.isEmpty()) {
+            Snackbar.make(binding.root, "No turn-by-turn steps available for this route.", Snackbar.LENGTH_SHORT).show()
+            return
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 24, 48, 24)
+        }
+
+        route.instructions.forEachIndexed { index, instruction ->
+            val stepDistanceMeters = if (index == 0) {
+                instruction.distanceFromRouteStartMeters
+            } else {
+                instruction.distanceFromRouteStartMeters - route.instructions[index - 1].distanceFromRouteStartMeters
+            }
+
+            container.addView(
+                TextView(this).apply {
+                    text = "${index + 1}. ${instruction.text}"
+                    textSize = 15f
+                    setPadding(0, 20, 0, 4)
+                }
+            )
+            container.addView(
+                TextView(this).apply {
+                    text = formatStepDistance(stepDistanceMeters)
+                    textSize = 12f
+                    setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
+                }
+            )
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Turn-by-turn directions")
+            .setView(ScrollView(this).apply { addView(container) })
+            .setPositiveButton("Close", null)
+            .show()
+    }
+
+    private fun formatStepDistance(meters: Double): String {
+        val miles = meters * METERS_TO_MILES
+        return if (miles < 0.1) "${(meters * 3.28084).roundToInt()} ft" else "%.1f mi".format(miles)
+    }
+
     private fun formatDuration(totalMinutes: Int): String =
         if (totalMinutes < 60) "$totalMinutes min" else "${totalMinutes / 60} hr ${totalMinutes % 60} min"
 
@@ -287,6 +396,7 @@ class MainActivity : AppCompatActivity() {
     private fun startNavigation() {
         val route = plannedRoute ?: return
         isNavigating = true
+        isCameraFollowing = true
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -296,7 +406,6 @@ class MainActivity : AppCompatActivity() {
 
         binding.searchCard.visibility = View.GONE
         binding.quickActionsRow.visibility = View.GONE
-        binding.recenterButton.visibility = View.GONE
         binding.navSheet.visibility = View.GONE
         binding.activeNavOverlay.visibility = View.VISIBLE
         binding.activeNavBottomBar.visibility = View.VISIBLE
@@ -329,9 +438,13 @@ class MainActivity : AppCompatActivity() {
         locationTracker.start(intervalMillis = 1000L) { location, bearing ->
             currentPosition = location
             progressTracker?.onLocationUpdate(location)
-            tomTomMap?.moveCamera(
-                CameraOptions(position = location.toGeoPoint(), zoom = 17.5, tilt = 60.0, rotation = bearing.toDouble())
-            )
+            // zoom/tilt deliberately omitted here (left null = unchanged) so a pinch-zoom
+            // or tilt gesture the driver made isn't reset on the next GPS tick.
+            if (isCameraFollowing) {
+                tomTomMap?.moveCamera(
+                    CameraOptions(position = location.toGeoPoint(), rotation = bearing.toDouble())
+                )
+            }
         }
     }
 
@@ -349,7 +462,6 @@ class MainActivity : AppCompatActivity() {
         binding.activeNavBottomBar.visibility = View.GONE
         binding.searchCard.visibility = View.VISIBLE
         binding.quickActionsRow.visibility = View.VISIBLE
-        binding.recenterButton.visibility = View.VISIBLE
         binding.navSheet.visibility = View.VISIBLE
 
         cancelRoute()
