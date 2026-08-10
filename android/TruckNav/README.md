@@ -38,9 +38,9 @@ android/TruckNav/
     MainActivity.kt              # screen + state machine (search → route → nav)
     model/                       # TruckProfile, LatLng, TruckRoute, RouteInstruction
     data/TruckProfileStore.kt    # persists truck dimensions/hazmat via SharedPreferences
-    routing/RouteRepository.kt   # truck-legal route calculation (TomTom Routing SDK)
+    routing/RouteRepository.kt   # truck-legal route calculation (TomTom Routing REST API)
     routing/RouteGeometry.kt     # cumulative-distance math for the route polyline
-    search/SearchRepository.kt   # destination search (TomTom Search SDK)
+    search/SearchRepository.kt   # destination search (TomTom Search REST API)
     traffic/TrafficController.kt # live traffic flow/incident overlay toggle
     location/LocationTracker.kt  # FusedLocationProviderClient wrapper
     voice/RouteProgressTracker.kt# GPS → "how far to the next turn" → announcement triggers
@@ -72,23 +72,39 @@ it (Android will prompt you to allow installs from your browser/file manager the
 You can also trigger a build on demand from the **Actions** tab → "Build TruckNav APK" →
 **Run workflow**, without pushing a new commit.
 
+## Why REST calls instead of TomTom's native Routing/Search SDK
+
+The map itself (`TomTomMap`, markers, the drawn route polyline, live traffic layers, camera
+control) uses TomTom's native "Maps and Navigation SDK" (`com.tomtom.sdk.maps:map-display-standard-android-complete`),
+verified directly against TomTom's own Dokka API reference during development. Truck routing
+and destination search, however, call TomTom's public REST APIs directly
+(`api.tomtom.com/routing/1/calculateRoute`, `api.tomtom.com/search/2/search`) instead of the
+native Routing/Search SDK modules. Two reasons:
+
+1. The native SDK's typed routing model is deep (a sealed `Instruction` hierarchy with ~18
+   maneuver-specific subtypes and no plain `.text`, physical-quantity wrapper types for
+   distance/duration, `Vehicle.Truck`/`MarkerOptions` marked `@RestrictToExtendedFlavor` in the
+   reference docs) — precisely mapping it by hand led to multiple rounds of CI failures.
+2. The REST endpoints are TomTom's long-stable, thoroughly documented v1/v2 API — the same one
+   the original HTML prototype this app is based on already used successfully — so it's the
+   more reliable path to guaranteed-working truck-legal routing on a personal/free API key.
+
+If you'd rather use the native `RoutePlanner`/`Search` objects (e.g. for offline routing or
+richer guidance events), see `TomTomSdk.createRoutePlanner()` / `TomTomSdk.createSearch()` in
+`com.tomtom.sdk.init` — `RouteRepository`/`SearchRepository` are the two files to swap.
+
 ## Known caveats / next steps for whoever picks this up
 
-- **Not yet compiled.** This was authored without an Android SDK/emulator available in the
-  build environment, so it hasn't been run through Gradle. TomTom's Android SDK moves its
-  package layout and artifact versions between releases fairly often; if Gradle sync flags an
-  unresolved import or a changed version number, use Android Studio's import quick-fix / check
-  the current numbers at the docs below and adjust — the overall architecture (repositories,
-  the progress tracker, the UI state machine) doesn't depend on those specifics.
-  - Maps SDK setup: https://docs.tomtom.com/maps/android/getting-started/project-setup
-  - Navigation SDK setup: https://docs.tomtom.com/navigation/android/getting-started/project-setup
-  - Routing guide: https://docs.tomtom.com/navigation/android/guides/routing/planning-a-route
-- **Voice guidance is DIY, not TomTom's paid Navigation SDK.** It's built from the routing
-  engine's turn-by-turn instruction list plus Android's on-device `TextToSpeech`, so it works
-  with a standard/free TomTom API key. TomTom also ships a full `GuidanceUpdatedListener`
-  based navigation stack if you later want lane guidance, speed-limit warnings, etc. — that's
-  a bigger integration this app intentionally skipped for a personal-use MVP.
-  See https://docs.tomtom.com/navigation/android/guides/navigation/turn-by-turn-navigation
+- **Voice guidance is DIY, not TomTom's paid Navigation SDK.** It's built from the REST routing
+  response's turn-by-turn instruction list (`guidance.instructions[].message`) plus Android's
+  on-device `TextToSpeech`, so it works with a standard/free TomTom API key. TomTom also ships a
+  full `GuidanceUpdatedListener`-based navigation stack if you later want lane guidance,
+  speed-limit warnings, etc. — a bigger integration intentionally skipped for a personal-use MVP.
 - **No background/foreground-service navigation yet.** Voice guidance runs while the app is in
   the foreground with the screen kept on; it doesn't currently continue if you switch apps.
 - **Launcher icon** is a simple placeholder vector, not real artwork.
+- **CI-verified but not device-tested.** The GitHub Actions build compiles this for real on
+  every push (see the badge-worthy fact that it's iterated through several real Gradle/TomTom
+  SDK errors already), which catches compile-time mistakes, but nobody has installed the
+  resulting APK on an actual phone yet — runtime behavior (permissions flow, voice timing, map
+  rendering) still needs a real test pass.

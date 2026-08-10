@@ -85,32 +85,30 @@ dependencies {
     // Location updates used to drive turn-by-turn voice guidance.
     implementation("com.google.android.gms:play-services-location:21.3.0")
 
-    // --- TomTom SDK -----------------------------------------------------
-    // Versions confirmed directly against repositories.tomtom.com's
-    // maven-metadata.xml (its <latest> tag) rather than docs pages, which
-    // lag. TomTom ships two version "families" that must each be pinned to
-    // their own latest, not mixed: init/location-provider on the 2.x line,
-    // map-display/search/routing on the 1.26.x line. Mixing older releases
-    // across the two pulls in both the old "sensoris" telemetry artifact and
-    // its renamed replacement "telemetry-protobuf-internal" at once, which
-    // fails the build with duplicate-class errors -- excluded below as a
-    // second layer of protection even when versions are aligned.
-    val tomtomInitVersion = "2.4.2"
-    val tomtomMapsVersion = "1.26.7"
-    val tomtomRoutingVersion = "1.26.7"
-    val tomtomSearchVersion = "1.26.7"
+    // Truck routing and destination search call TomTom's public REST APIs
+    // directly (see routing/RouteRepository.kt and search/SearchRepository.kt)
+    // rather than the native Routing/Search SDK modules. That REST schema is
+    // TomTom's long-stable, well-documented v1/v2 API -- the same one the
+    // original HTML prototype this app is based on used successfully -- while
+    // the native Kotlin Routing/Search SDK's typed model (Vehicle, Instruction
+    // sealed hierarchy, Quantity-based Distance/Duration, etc.) turned out to
+    // be deep enough that guessing its exact surface caused repeated CI
+    // failures. This keeps the dependency graph small too, avoiding the
+    // duplicate-class conflicts that came from combining multiple TomTom SDK
+    // modules pinned to different release trains.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    implementation("com.tomtom.sdk:init:$tomtomInitVersion")
-    implementation("com.tomtom.sdk.maps:map-display:$tomtomMapsVersion") {
-        exclude(group = "com.tomtom.sdk.telemetry", module = "sensoris")
-    }
-    implementation("com.tomtom.sdk.location:provider-android:$tomtomInitVersion")
-    implementation("com.tomtom.sdk.search:search-online:$tomtomSearchVersion") {
-        exclude(group = "com.tomtom.sdk.telemetry", module = "sensoris")
-    }
-    implementation("com.tomtom.sdk.routing:route-planner-online:$tomtomRoutingVersion") {
-        exclude(group = "com.tomtom.sdk.telemetry", module = "sensoris")
-    }
+    // --- TomTom SDK (map display only) -----------------------------------
+    // Versions confirmed directly against repositories.tomtom.com's
+    // maven-metadata.xml. These are the concrete "-android-complete"
+    // artifacts (the free/public flavor), not the older ambiguous
+    // "map-display"/"init" artifact names, which avoids needing Gradle
+    // flavor-attribute resolution for these specific dependencies.
+    val tomtomSdkVersion = "2.4.2"
+
+    implementation("com.tomtom.sdk:init-android-complete:$tomtomSdkVersion")
+    implementation("com.tomtom.sdk.common:configuration:$tomtomSdkVersion")
+    implementation("com.tomtom.sdk.maps:map-display-standard-android-complete:$tomtomSdkVersion")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

@@ -33,8 +33,6 @@ import java.util.Locale
 import com.tomtom.sdk.location.GeoPoint
 import com.tomtom.sdk.map.display.TomTomMap
 import com.tomtom.sdk.map.display.camera.CameraOptions
-import com.tomtom.sdk.map.display.marker.Marker
-import com.tomtom.sdk.map.display.marker.MarkerOptions
 import com.tomtom.sdk.map.display.route.Route as MapRoute
 import com.tomtom.sdk.map.display.route.RouteOptions
 import com.tomtom.sdk.map.display.ui.MapFragment
@@ -54,7 +52,6 @@ class MainActivity : AppCompatActivity() {
 
     private var currentPosition = LatLng(34.5828, -117.4093) // fallback: Adelanto, CA
     private var destinationPosition: LatLng? = null
-    private var destinationMarker: Marker? = null
     private var drawnRoute: MapRoute? = null
     private var plannedRoute: TruckRoute? = null
 
@@ -75,8 +72,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        routeRepository = RouteRepository(this)
-        searchRepository = SearchRepository(this)
+        routeRepository = RouteRepository()
+        searchRepository = SearchRepository()
         truckProfileStore = TruckProfileStore(this)
         locationTracker = LocationTracker(this)
         voiceGuidanceEngine = VoiceGuidanceEngine(this)
@@ -181,7 +178,6 @@ class MainActivity : AppCompatActivity() {
             when (result) {
                 is DestinationResult.Success -> {
                     destinationPosition = result.position
-                    placeDestinationMarker(result.position)
                     calculateRoute(truckProfileStore.load())
                 }
                 DestinationResult.NoResults ->
@@ -190,11 +186,6 @@ class MainActivity : AppCompatActivity() {
                     Snackbar.make(binding.root, result.message, Snackbar.LENGTH_SHORT).show()
             }
         }
-    }
-
-    private fun placeDestinationMarker(position: LatLng) {
-        destinationMarker?.remove()
-        destinationMarker = tomTomMap?.addMarker(MarkerOptions(coordinate = position.toGeoPoint()))
     }
 
     private fun calculateRoute(profile: TruckProfile) {
@@ -252,9 +243,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun cancelRoute() {
         drawnRoute?.remove()
-        destinationMarker?.remove()
         drawnRoute = null
-        destinationMarker = null
         destinationPosition = null
         plannedRoute = null
 
@@ -315,7 +304,7 @@ class MainActivity : AppCompatActivity() {
             currentPosition = location
             progressTracker?.onLocationUpdate(location)
             tomTomMap?.moveCamera(
-                CameraOptions(position = location.toGeoPoint(), zoom = 17.5, tilt = 60.0, bearing = bearing.toDouble())
+                CameraOptions(position = location.toGeoPoint(), zoom = 17.5, tilt = 60.0, rotation = bearing.toDouble())
             )
         }
     }
