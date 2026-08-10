@@ -29,6 +29,7 @@
         android:layout_marginEnd="16dp"
         app:cardCornerRadius="20dp"
         app:cardElevation="8dp"
+        app:cardBackgroundColor="@color/surface_white"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -67,7 +68,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="#E5E7EB"
+                android:background="@color/divider"
                 android:layout_marginBottom="10dp" />
 
             <LinearLayout
@@ -196,7 +197,7 @@
             app:icon="@drawable/ic_traffic"
             app:iconTint="@color/truck_orange"
             app:cornerRadius="24dp"
-            app:backgroundTint="@android:color/white" />
+            app:backgroundTint="@color/surface_white" />
     </LinearLayout>
 
     <!-- ===================== Map style (satellite toggle) FAB ===================== -->
@@ -210,7 +211,7 @@
         android:src="@drawable/ic_satellite"
         app:fabSize="mini"
         app:tint="@color/text_primary"
-        app:backgroundTint="@android:color/white"
+        app:backgroundTint="@color/surface_white"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toTopOf="@id/recenterButton" />
 
@@ -224,17 +225,18 @@
         android:contentDescription="@string/btn_start_nav"
         android:src="@drawable/ic_crosshair"
         app:tint="@color/text_primary"
-        app:backgroundTint="@android:color/white"
+        app:backgroundTint="@color/surface_white"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />
 
     <!-- ===================== Bottom navigation sheet ===================== -->
-    <androidx.cardview.widget.CardView
+    <com.google.android.material.card.MaterialCardView
         android:id="@+id/navSheet"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        app:cardCornerRadius="0dp"
+        app:shapeAppearanceOverlay="@style/ShapeAppearance.MunozGPS.NavSheet"
         app:cardElevation="12dp"
+        app:cardBackgroundColor="@color/surface_white"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
@@ -391,7 +393,7 @@
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
+    </com.google.android.material.card.MaterialCardView>
 
     <!-- ===================== Active navigation overlay ===================== -->
     <!-- Tappable: opens the full turn-by-turn step list. -->
@@ -459,7 +461,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             app:cardCornerRadius="16dp"
-            app:cardElevation="8dp">
+            app:cardElevation="8dp"
+            app:cardBackgroundColor="@color/surface_white">
 
             <LinearLayout
                 android:layout_width="match_parent"

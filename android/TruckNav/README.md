@@ -1,4 +1,4 @@
-# TruckNav — personal commercial-truck navigation app
+# MunozGPS — personal commercial-truck navigation app
 
 A native Android app for personal use: truck-legal routing (weight/height/length/hazmat
 restrictions honored, not just car routes), live traffic, and spoken turn-by-turn voice
@@ -69,7 +69,7 @@ APK on GitHub's servers and publishes it to this repo's **Releases** page
 (github.com/greenlenguaburrito/Engine/releases, tag `truck-nav-debug`) as a direct-download
 `.apk` file. From a phone: open that Releases page in a browser, download the APK, then install
 it (Android will prompt you to allow installs from your browser/file manager the first time).
-You can also trigger a build on demand from the **Actions** tab → "Build TruckNav APK" →
+You can also trigger a build on demand from the **Actions** tab → "Build MunozGPS APK" →
 **Run workflow**, without pushing a new commit.
 
 ## Why REST calls instead of TomTom's native Routing/Search SDK

@@ -1,4 +1,4 @@
-name: Build TruckNav APK
+name: Build MunozGPS APK
 
 on:
   push:
@@ -55,14 +55,15 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TruckNav-debug-apk
+          name: MunozGPS-debug-apk
           path: android/TruckNav/app/build/outputs/apk/debug/*.apk
 
       - name: Publish to a downloadable Release
         uses: softprops/action-gh-release@v2
         with:
+          # Tag stays truck-nav-debug so the existing download link keeps working.
           tag_name: truck-nav-debug
-          name: "TruckNav (debug build)"
+          name: "MunozGPS (debug build)"
           body: |
             Auto-built from commit ${{ github.sha }} on branch `${{ github.ref_name }}`.
             Download the `.apk` below and install it directly on your phone

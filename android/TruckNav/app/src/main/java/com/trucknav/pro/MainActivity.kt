@@ -288,7 +288,7 @@ class MainActivity : AppCompatActivity() {
     private fun toggleTraffic() {
         val enabled = trafficController?.toggle() ?: false
         binding.trafficButton.backgroundTintList = android.content.res.ColorStateList.valueOf(
-            ContextCompat.getColor(this, if (enabled) R.color.truck_orange else android.R.color.white)
+            ContextCompat.getColor(this, if (enabled) R.color.truck_orange else R.color.surface_white)
         )
         val message = if (enabled) "Live traffic & incidents enabled" else "Live traffic disabled"
         Snackbar.make(binding.root, message, Snackbar.LENGTH_SHORT).show()
@@ -305,7 +305,7 @@ class MainActivity : AppCompatActivity() {
             }
         )
         binding.satelliteButton.backgroundTintList = android.content.res.ColorStateList.valueOf(
-            ContextCompat.getColor(this, if (isSatelliteView) R.color.truck_orange else android.R.color.white)
+            ContextCompat.getColor(this, if (isSatelliteView) R.color.truck_orange else R.color.surface_white)
         )
     }
 
