@@ -120,11 +120,23 @@ class RouteRepository {
                 val message = instruction.optString("message", "")
                 val point = instruction.optJSONObject("point") ?: continue
                 if (message.isBlank()) continue
+
+                // maneuver is a code like "SHARP_LEFT" / "MAKE_UTURN" / "TRY_MAKE_UTURN"; when it's
+                // missing, fall back to the raw turn angle (-180 = U-turn, beyond +/-135 = a sharp
+                // turn even if not flagged as one). Neither field carries grade/elevation data, so
+                // this can only flag turn geometry, not steep grades or runaway-truck ramps.
+                val maneuver = instruction.optString("maneuver").takeIf { it.isNotBlank() }
+                val turnAngle = instruction.optDouble("turnAngleInDecimalDegrees", Double.NaN)
+                val isSharpTurn = maneuver in SHARP_MANEUVERS ||
+                    (!turnAngle.isNaN() && kotlin.math.abs(turnAngle) >= SHARP_TURN_ANGLE_DEGREES)
+
                 instructions.add(
                     RouteInstruction(
                         text = message,
                         distanceFromRouteStartMeters = instruction.optDouble("routeOffsetInMeters", 0.0),
-                        point = LatLng(point.getDouble("latitude"), point.getDouble("longitude"))
+                        point = LatLng(point.getDouble("latitude"), point.getDouble("longitude")),
+                        maneuver = maneuver,
+                        isSharpTurn = isSharpTurn
                     )
                 )
             }
@@ -163,5 +175,10 @@ class RouteRepository {
             arrivalTimeMillis = System.currentTimeMillis() + travelTimeSeconds * 1000,
             trafficSegments = trafficSegments
         )
+    }
+
+    private companion object {
+        val SHARP_MANEUVERS = setOf("SHARP_LEFT", "SHARP_RIGHT", "MAKE_UTURN", "TRY_MAKE_UTURN")
+        const val SHARP_TURN_ANGLE_DEGREES = 135.0
     }
 }

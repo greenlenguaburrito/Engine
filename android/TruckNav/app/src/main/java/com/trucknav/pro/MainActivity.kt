@@ -16,6 +16,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updateLayoutParams
+import androidx.core.view.updatePadding
 import com.google.android.material.snackbar.Snackbar
 import com.trucknav.pro.data.RecentDestinationsStore
 import com.trucknav.pro.data.TruckProfileStore
@@ -27,6 +31,8 @@ import com.trucknav.pro.model.RouteInstruction
 import com.trucknav.pro.model.TrafficSeverity
 import com.trucknav.pro.model.TruckProfile
 import com.trucknav.pro.model.TruckRoute
+import com.trucknav.pro.poi.WeighStationRepository
+import com.trucknav.pro.poi.WeighStationResult
 import com.trucknav.pro.routing.RouteRepository
 import com.trucknav.pro.routing.RouteResult
 import com.trucknav.pro.search.DestinationCandidate
@@ -48,7 +54,10 @@ import com.tomtom.sdk.map.display.MapOptions
 import com.tomtom.sdk.map.display.TomTomMap
 import com.tomtom.sdk.map.display.camera.CameraOptions
 import com.tomtom.sdk.map.display.gesture.MapPanningListener
+import com.tomtom.sdk.map.display.image.ImageFactory
 import com.tomtom.sdk.map.display.location.LocationMarkerOptions
+import com.tomtom.sdk.map.display.marker.Marker
+import com.tomtom.sdk.map.display.marker.MarkerOptions
 import com.tomtom.sdk.map.display.route.Route as MapRoute
 import com.tomtom.sdk.map.display.route.RouteOptions
 import com.tomtom.sdk.map.display.ui.MapFragment
@@ -59,6 +68,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var routeRepository: RouteRepository
     private lateinit var searchRepository: SearchRepository
+    private lateinit var weighStationRepository: WeighStationRepository
     private lateinit var truckProfileStore: TruckProfileStore
     private lateinit var recentDestinationsStore: RecentDestinationsStore
     private lateinit var locationTracker: LocationTracker
@@ -79,6 +89,7 @@ class MainActivity : AppCompatActivity() {
     private val waypoints = mutableListOf<Pair<LatLng, String>>()
 
     private val drawnRouteSegments = mutableListOf<MapRoute>()
+    private val drawnWeighStationMarkers = mutableListOf<Marker>()
     private var plannedRoute: TruckRoute? = null
 
     private var progressTracker: RouteProgressTracker? = null
@@ -105,9 +116,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        setupWindowInsets()
 
         routeRepository = RouteRepository()
         searchRepository = SearchRepository()
+        weighStationRepository = WeighStationRepository()
         truckProfileStore = TruckProfileStore(this)
         recentDestinationsStore = RecentDestinationsStore(this)
         locationTracker = LocationTracker(this)
@@ -121,6 +134,29 @@ class MainActivity : AppCompatActivity() {
 
         setupListeners()
         ensureLocationPermission()
+    }
+
+    /**
+     * Android 15 (targetSdk 35) draws this app edge-to-edge by default, so the bottom
+     * route sheet and the floating active-nav bar would otherwise sit underneath the
+     * phone's own back/home/recents bar (3-button nav) or gesture strip. Push them up
+     * by however tall that system bar actually is on this device, on top of their
+     * existing fixed padding/margin.
+     */
+    private fun setupWindowInsets() {
+        val navSheetBasePadding = binding.navSheet.paddingBottom
+        val activeNavBarBaseMargin = (binding.activeNavBottomBar.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val systemBarsInsetBottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+
+            binding.navSheet.updatePadding(bottom = navSheetBasePadding + systemBarsInsetBottom)
+            binding.activeNavBottomBar.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                bottomMargin = activeNavBarBaseMargin + systemBarsInsetBottom
+            }
+
+            insets
+        }
     }
 
     // ------------------------------------------------------------------
@@ -451,11 +487,36 @@ class MainActivity : AppCompatActivity() {
         }
 
         map.zoomToRoutes()
+        showWeighStations(route)
     }
 
     private fun clearDrawnRoute() {
         drawnRouteSegments.forEach { it.remove() }
         drawnRouteSegments.clear()
+        drawnWeighStationMarkers.forEach { it.remove() }
+        drawnWeighStationMarkers.clear()
+    }
+
+    /**
+     * Marks weigh station / port-of-entry POI locations near the route. Locations only --
+     * TomTom's map data can say a weigh station exists here, but no source (TomTom's or
+     * otherwise) publishes live, crowd-verified open/closed status, so this deliberately
+     * never claims a station is currently open or closed.
+     */
+    private fun showWeighStations(route: TruckRoute) {
+        weighStationRepository.findAlongRoute(route) { result ->
+            val map = tomTomMap ?: return@findAlongRoute
+            if (result !is WeighStationResult.Success) return@findAlongRoute
+            result.stations.forEach { station ->
+                drawnWeighStationMarkers += map.addMarker(
+                    MarkerOptions(
+                        coordinate = station.position.toGeoPoint(),
+                        pinImage = ImageFactory.fromResource(R.drawable.ic_weigh_station),
+                        balloonText = station.name
+                    )
+                )
+            }
+        }
     }
 
     private fun showRouteSummary(route: TruckRoute) {
@@ -500,9 +561,16 @@ class MainActivity : AppCompatActivity() {
 
             container.addView(
                 TextView(this).apply {
-                    text = "${index + 1}. ${instruction.text}"
+                    text = if (instruction.isSharpTurn) {
+                        "${index + 1}. ⚠ ${instruction.text}"
+                    } else {
+                        "${index + 1}. ${instruction.text}"
+                    }
                     textSize = 15f
                     setPadding(0, 20, 0, 4)
+                    if (instruction.isSharpTurn) {
+                        setTextColor(ContextCompat.getColor(context, R.color.traffic_major))
+                    }
                 }
             )
             container.addView(
@@ -583,7 +651,16 @@ class MainActivity : AppCompatActivity() {
     private fun attachProgressTracker(route: TruckRoute) {
         progressTracker = RouteProgressTracker(route, object : RouteProgressTracker.Listener {
             override fun onInstructionChanged(instruction: RouteInstruction) {
-                runOnUiThread { binding.navInstructionText.text = instruction.text }
+                runOnUiThread {
+                    binding.navInstructionText.text = instruction.text
+                    if (instruction.isSharpTurn) {
+                        binding.activeNavOverlay.setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.traffic_major))
+                        binding.navOverlayIcon.setImageResource(R.drawable.ic_warning)
+                    } else {
+                        binding.activeNavOverlay.setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.truck_green))
+                        binding.navOverlayIcon.setImageResource(R.drawable.ic_turn_right)
+                    }
+                }
             }
 
             override fun onAnnounce(text: String) {

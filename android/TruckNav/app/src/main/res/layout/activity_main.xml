@@ -397,6 +397,7 @@
         app:layout_constraintEnd_toEndOf="parent">
 
         <ImageView
+            android:id="@+id/navOverlayIcon"
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:layout_marginEnd="16dp"
@@ -433,6 +434,9 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
+        <!-- Base 32dp bottom margin above; MainActivity adds the system nav bar /
+             gesture bar inset on top of it at runtime so these buttons never sit
+             under the phone's own back/home/recents controls. -->
 
         <androidx.cardview.widget.CardView
             android:layout_width="0dp"
