@@ -7,6 +7,15 @@ data class RouteInstruction(
     val point: LatLng
 )
 
+enum class TrafficSeverity { MINOR, MODERATE, MAJOR, CLOSURE }
+
+/** A congested stretch of the route, as a range of indices into [TruckRoute.path]. */
+data class TrafficSegment(
+    val startIndex: Int,
+    val endIndex: Int,
+    val severity: TrafficSeverity
+)
+
 /** A truck-legal route as returned by the routing engine, trimmed to what the UI/voice guidance need. */
 data class TruckRoute(
     val path: List<LatLng>,
@@ -14,5 +23,6 @@ data class TruckRoute(
     val distanceMeters: Double,
     val travelTimeSeconds: Long,
     val trafficDelaySeconds: Long,
-    val arrivalTimeMillis: Long
+    val arrivalTimeMillis: Long,
+    val trafficSegments: List<TrafficSegment> = emptyList()
 )

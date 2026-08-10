@@ -24,6 +24,7 @@ import com.trucknav.pro.location.LocationTracker
 import com.trucknav.pro.location.TomTomLocationProviderAdapter
 import com.trucknav.pro.model.LatLng
 import com.trucknav.pro.model.RouteInstruction
+import com.trucknav.pro.model.TrafficSeverity
 import com.trucknav.pro.model.TruckProfile
 import com.trucknav.pro.model.TruckRoute
 import com.trucknav.pro.routing.RouteRepository
@@ -77,7 +78,7 @@ class MainActivity : AppCompatActivity() {
     // common case of 1-2 stops on a personal route, but not stop-aware.
     private val waypoints = mutableListOf<Pair<LatLng, String>>()
 
-    private var drawnRoute: MapRoute? = null
+    private val drawnRouteSegments = mutableListOf<MapRoute>()
     private var plannedRoute: TruckRoute? = null
 
     private var progressTracker: RouteProgressTracker? = null
@@ -416,16 +417,45 @@ class MainActivity : AppCompatActivity() {
 
     private fun drawRoute(route: TruckRoute) {
         val map = tomTomMap ?: return
-        drawnRoute?.remove()
+        clearDrawnRoute()
 
-        drawnRoute = map.addRoute(
+        // Base line for the whole route, plus the start/end pins.
+        drawnRouteSegments += map.addRoute(
             RouteOptions(
                 geometry = route.path.map { it.toGeoPoint() },
                 departureMarkerVisible = true,
                 destinationMarkerVisible = true
             )
         )
+
+        // Congested stretches drawn on top in their own color so traffic severity is
+        // visible at a glance, matching what the ETA card's delay callout is warning about.
+        for (segment in route.trafficSegments) {
+            val start = segment.startIndex.coerceIn(0, route.path.size - 1)
+            val end = segment.endIndex.coerceIn(start, route.path.size - 1)
+            if (end <= start) continue
+
+            val color = when (segment.severity) {
+                TrafficSeverity.MODERATE -> ContextCompat.getColor(this, R.color.traffic_moderate)
+                TrafficSeverity.MAJOR -> ContextCompat.getColor(this, R.color.traffic_major)
+                TrafficSeverity.CLOSURE -> ContextCompat.getColor(this, R.color.traffic_closure)
+                TrafficSeverity.MINOR -> continue
+            }
+
+            drawnRouteSegments += map.addRoute(
+                RouteOptions(
+                    geometry = route.path.subList(start, end + 1).map { it.toGeoPoint() },
+                    color = color
+                )
+            )
+        }
+
         map.zoomToRoutes()
+    }
+
+    private fun clearDrawnRoute() {
+        drawnRouteSegments.forEach { it.remove() }
+        drawnRouteSegments.clear()
     }
 
     private fun showRouteSummary(route: TruckRoute) {
@@ -500,8 +530,7 @@ class MainActivity : AppCompatActivity() {
         if (totalMinutes < 60) "$totalMinutes min" else "${totalMinutes / 60} hr ${totalMinutes % 60} min"
 
     private fun cancelRoute() {
-        drawnRoute?.remove()
-        drawnRoute = null
+        clearDrawnRoute()
         destinationPosition = null
         destinationLabel = null
         plannedRoute = null

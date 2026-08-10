@@ -5,6 +5,8 @@ import android.os.Looper
 import com.trucknav.pro.BuildConfig
 import com.trucknav.pro.model.LatLng
 import com.trucknav.pro.model.RouteInstruction
+import com.trucknav.pro.model.TrafficSegment
+import com.trucknav.pro.model.TrafficSeverity
 import com.trucknav.pro.model.TruckProfile
 import com.trucknav.pro.model.TruckRoute
 import okhttp3.Call
@@ -63,6 +65,7 @@ class RouteRepository {
             .addQueryParameter("computeTravelTimeFor", "all")
             .addQueryParameter("instructionsType", "text")
             .addQueryParameter("language", "en-US")
+            .addQueryParameter("sectionType", "traffic")
 
         if (profile.hazmat) {
             urlBuilder.addQueryParameter("vehicleLoadType", "otherHazmatExplosive")
@@ -129,13 +132,36 @@ class RouteRepository {
 
         val travelTimeSeconds = summary.getLong("travelTimeInSeconds")
 
+        val trafficSegments = mutableListOf<TrafficSegment>()
+        val sections = route.optJSONArray("sections")
+        if (sections != null) {
+            for (i in 0 until sections.length()) {
+                val section = sections.getJSONObject(i)
+                if (section.optString("sectionType") != "TRAFFIC") continue
+                val start = section.optInt("startPointIndex", -1)
+                val end = section.optInt("endPointIndex", -1)
+                if (start < 0 || end <= start) continue
+                // magnitudeOfDelay: 0=unknown, 1=minor, 2=moderate, 3=major, 4=closure/indefinite.
+                val severity = when (section.optInt("magnitudeOfDelay", 0)) {
+                    2 -> TrafficSeverity.MODERATE
+                    3 -> TrafficSeverity.MAJOR
+                    4 -> TrafficSeverity.CLOSURE
+                    else -> null // skip unknown/minor delays -- not worth highlighting on the map
+                }
+                if (severity != null) {
+                    trafficSegments.add(TrafficSegment(start, end, severity))
+                }
+            }
+        }
+
         return TruckRoute(
             path = path,
             instructions = instructions,
             distanceMeters = summary.getDouble("lengthInMeters"),
             travelTimeSeconds = travelTimeSeconds,
             trafficDelaySeconds = summary.optLong("trafficDelayInSeconds", 0L),
-            arrivalTimeMillis = System.currentTimeMillis() + travelTimeSeconds * 1000
+            arrivalTimeMillis = System.currentTimeMillis() + travelTimeSeconds * 1000,
+            trafficSegments = trafficSegments
         )
     }
 }
