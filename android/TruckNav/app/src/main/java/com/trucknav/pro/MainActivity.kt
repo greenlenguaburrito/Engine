@@ -31,6 +31,9 @@ import com.trucknav.pro.model.RouteInstruction
 import com.trucknav.pro.model.TrafficSeverity
 import com.trucknav.pro.model.TruckProfile
 import com.trucknav.pro.model.TruckRoute
+import com.trucknav.pro.poi.TruckEntrance
+import com.trucknav.pro.poi.TruckEntranceRepository
+import com.trucknav.pro.poi.TruckEntranceResult
 import com.trucknav.pro.poi.WeighStationRepository
 import com.trucknav.pro.poi.WeighStationResult
 import com.trucknav.pro.routing.RouteRepository
@@ -69,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var routeRepository: RouteRepository
     private lateinit var searchRepository: SearchRepository
     private lateinit var weighStationRepository: WeighStationRepository
+    private lateinit var truckEntranceRepository: TruckEntranceRepository
     private lateinit var truckProfileStore: TruckProfileStore
     private lateinit var recentDestinationsStore: RecentDestinationsStore
     private lateinit var locationTracker: LocationTracker
@@ -90,6 +94,7 @@ class MainActivity : AppCompatActivity() {
 
     private val drawnRouteSegments = mutableListOf<MapRoute>()
     private val drawnWeighStationMarkers = mutableListOf<Marker>()
+    private val drawnTruckEntranceMarkers = mutableListOf<Marker>()
     private var plannedRoute: TruckRoute? = null
 
     private var progressTracker: RouteProgressTracker? = null
@@ -121,6 +126,7 @@ class MainActivity : AppCompatActivity() {
         routeRepository = RouteRepository()
         searchRepository = SearchRepository()
         weighStationRepository = WeighStationRepository()
+        truckEntranceRepository = TruckEntranceRepository()
         truckProfileStore = TruckProfileStore(this)
         recentDestinationsStore = RecentDestinationsStore(this)
         locationTracker = LocationTracker(this)
@@ -304,10 +310,69 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setFinalDestination(candidate: DestinationCandidate) {
+        clearTruckEntranceMarkers()
         destinationPosition = candidate.position
         destinationLabel = candidate.primaryLabel
         binding.destInput.setText(candidate.primaryLabel)
         calculateRoute(truckProfileStore.load())
+        checkForTruckEntrance(candidate.position)
+    }
+
+    /**
+     * Looks up OSM-tagged loading docks / service entrances / HGV gates near the
+     * destination and, if one is close enough to plausibly be this address's truck
+     * entrance, offers to route there instead of the street address. Most addresses
+     * won't have anything tagged -- this stays silent when that's the case rather
+     * than nagging on every search.
+     */
+    private fun checkForTruckEntrance(destination: LatLng) {
+        truckEntranceRepository.findNear(destination) { result ->
+            // The driver may have already searched something else by the time this
+            // (possibly slow/flaky) lookup returns -- don't act on a stale destination.
+            if (destinationPosition != destination) return@findNear
+            if (result !is TruckEntranceResult.Success) return@findNear
+
+            val map = tomTomMap
+            if (map != null) {
+                result.entrances.forEach { entrance ->
+                    drawnTruckEntranceMarkers += map.addMarker(
+                        MarkerOptions(
+                            coordinate = entrance.position.toGeoPoint(),
+                            pinImage = ImageFactory.fromResource(R.drawable.ic_truck_entrance),
+                            balloonText = entrance.kind
+                        )
+                    )
+                }
+            }
+
+            val nearest = result.entrances.minByOrNull { it.position.distanceTo(destination) } ?: return@findNear
+            if (nearest.position.distanceTo(destination) <= REROUTE_OFFER_RADIUS_METERS) {
+                offerRouteToTruckEntrance(nearest, destination)
+            }
+        }
+    }
+
+    private fun offerRouteToTruckEntrance(entrance: TruckEntrance, originalDestination: LatLng) {
+        AlertDialog.Builder(this)
+            .setTitle("Truck entrance found")
+            .setMessage(
+                "OpenStreetMap has a marked ${entrance.kind.lowercase(Locale.US)} near this address. " +
+                    "Route there instead of the street address?\n\n" +
+                    "(This only changes where the pin is -- the route still follows public roads to get there.)"
+            )
+            .setPositiveButton("Route to entrance") { _, _ ->
+                if (destinationPosition == originalDestination) {
+                    destinationPosition = entrance.position
+                    calculateRoute(truckProfileStore.load())
+                }
+            }
+            .setNegativeButton("Use street address", null)
+            .show()
+    }
+
+    private fun clearTruckEntranceMarkers() {
+        drawnTruckEntranceMarkers.forEach { it.remove() }
+        drawnTruckEntranceMarkers.clear()
     }
 
     private fun promptAddStop() {
@@ -599,6 +664,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun cancelRoute() {
         clearDrawnRoute()
+        clearTruckEntranceMarkers()
         destinationPosition = null
         destinationLabel = null
         plannedRoute = null
@@ -737,5 +803,6 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val METERS_TO_MILES = 0.000621371
+        const val REROUTE_OFFER_RADIUS_METERS = 200.0
     }
 }
