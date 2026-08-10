@@ -35,6 +35,11 @@ android {
         buildConfigField("String", "TOMTOM_API_KEY", "\"$tomtomApiKey\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // TomTom SDK artifacts publish "complete" and "extended" flavor variants;
+        // Gradle can't pick one on its own. "extended" needs Artifactory credentials
+        // we don't have, so pin to the free/public "complete" flavor.
+        missingDimensionStrategy("tomtom-sdk-version", "complete")
     }
 
     buildTypes {
